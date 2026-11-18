@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Untitled document – DOCX Editor</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="module" src="/static/js/app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="titlebar">
+      <div class="titlebar-brand">
+        <img src="/static/favicon.svg" alt="" class="titlebar-logo" width="20" height="20">
+        <span class="titlebar-app">DOCX Editor</span>
+      </div>
+      <div class="titlebar-document">
+        <span class="document-name" id="document-name">Untitled document</span>
+        <span class="save-state" id="save-state">No document open</span>
+      </div>
+      <div class="titlebar-spacer" aria-hidden="true"></div>
+    </header>
+
+    <nav class="toolbar toolbar-main" aria-label="File and editing">
+      <div class="toolbar-group" role="group" aria-label="File">
+        <button type="button" class="tool" data-action="new" disabled title="New document (Ctrl+N) — not available yet">
+          <span class="tool-icon" aria-hidden="true">🗋</span><span class="tool-label">New</span>
+        </button>
+        <button type="button" class="tool" data-action="open" disabled title="Open a .docx file (Ctrl+O) — not available yet">
+          <span class="tool-icon" aria-hidden="true">📂</span><span class="tool-label">Open</span>
+        </button>
+        <button type="button" class="tool" data-action="save" disabled title="Save (Ctrl+S) — not available yet">
+          <span class="tool-icon" aria-hidden="true">💾</span><span class="tool-label">Save</span>
+        </button>
+        <button type="button" class="tool" data-action="save-as" disabled title="Save as a different file — not available yet">
+          <span class="tool-label">Save as…</span>
+        </button>
+      </div>
+      <div class="toolbar-group" role="group" aria-label="History">
+        <button type="button" class="tool" data-action="undo" disabled title="Undo (Ctrl+Z) — not available yet">
+          <span class="tool-icon" aria-hidden="true">↶</span><span class="tool-label visually-hidden">Undo</span>
+        </button>
+        <button type="button" class="tool" data-action="redo" disabled title="Redo (Ctrl+Y) — not available yet">
+          <span class="tool-icon" aria-hidden="true">↷</span><span class="tool-label visually-hidden">Redo</span>
+        </button>
+      </div>
+      <div class="toolbar-group" role="group" aria-label="Editing">
+        <button type="button" class="tool" data-action="find" disabled title="Find and replace (Ctrl+H) — not available yet">
+          <span class="tool-icon" aria-hidden="true">🔍</span><span class="tool-label">Find</span>
+        </button>
+      </div>
+    </nav>
+
+    <nav class="toolbar toolbar-format" aria-label="Formatting">
+      <div class="toolbar-group" role="group" aria-label="Style">
+        <label class="visually-hidden" for="style-select">Paragraph style</label>
+        <select id="style-select" class="tool-select tool-select-wide" disabled title="Paragraph style — not available yet">
+          <option>Normal</option>
+          <option>Heading 1</option>
+          <option>Heading 2</option>
+          <option>Heading 3</option>
+          <option>Title</option>
+        </select>
+      </div>
+      <div class="toolbar-group" role="group" aria-label="Font">
+        <label class="visually-hidden" for="font-family">Font</label>
+        <select id="font-family" class="tool-select tool-select-wide" disabled title="Font — not available yet">
+          <option>Calibri</option>
+          <option>Arial</option>
+          <option>Cambria</option>
+          <option>Georgia</option>
+          <option>Times New Roman</option>
+          <option>Courier New</option>
+        </select>
+        <label class="visually-hidden" for="font-size">Font size</label>
+        <select id="font-size" class="tool-select" disabled title="Font size — not available yet">
+          <option>8</option><option>9</option><option>10</option><option selected>11</option><option>12</option>
+          <option>14</option><option>16</option><option>18</option><option>24</option><option>36</option>
+        </select>
+      </div>
+      <div class="toolbar-group" role="group" aria-label="Character formatting">
+        <button type="button" class="tool tool-square" data-action="bold" disabled title="Bold (Ctrl+B) — not available yet"><b>B</b></button>
+        <button type="button" class="tool tool-square" data-action="italic" disabled title="Italic (Ctrl+I) — not available yet"><i>I</i></button>
+        <button type="button" class="tool tool-square" data-action="underline" disabled title="Underline (Ctrl+U) — not available yet"><u>U</u></button>
+        <button type="button" class="tool tool-square" data-action="strikethrough" disabled title="Strikethrough — not available yet"><s>S</s></button>
+        <button type="button" class="tool tool-square" data-action="text-color" disabled title="Text colour — not available yet">
+          <span class="color-swatch swatch-text" aria-hidden="true">A</span><span class="visually-hidden">Text colour</span>
+        </button>
+        <button type="button" class="tool tool-square" data-action="highlight" disabled title="Highlight colour — not available yet">
+          <span class="color-swatch swatch-highlight" aria-hidden="true">ab</span><span class="visually-hidden">Highlight colour</span>
+        </button>
+      </div>
+      <div class="toolbar-group" role="group" aria-label="Paragraph">
+        <button type="button" class="tool tool-square" data-action="align-left" disabled title="Align left — not available yet"><span class="align-icon align-left" aria-hidden="true"></span><span class="visually-hidden">Align left</span></button>
+        <button type="button" class="tool tool-square" data-action="align-center" disabled title="Centre — not available yet"><span class="align-icon align-center" aria-hidden="true"></span><span class="visually-hidden">Centre</span></button>
+        <button type="button" class="tool tool-square" data-action="align-right" disabled title="Align right — not available yet"><span class="align-icon align-right" aria-hidden="true"></span><span class="visually-hidden">Align right</span></button>
+        <button type="button" class="tool tool-square" data-action="align-justify" disabled title="Justify — not available yet"><span class="align-icon align-justify" aria-hidden="true"></span><span class="visually-hidden">Justify</span></button>
+        <button type="button" class="tool tool-square" data-action="bullets" disabled title="Bulleted list — not available yet"><span aria-hidden="true">•≡</span><span class="visually-hidden">Bulleted list</span></button>
+        <button type="button" class="tool tool-square" data-action="numbering" disabled title="Numbered list — not available yet"><span aria-hidden="true">1≡</span><span class="visually-hidden">Numbered list</span></button>
+      </div>
+    </nav>
+
+    <main class="workspace" id="workspace" aria-label="Document">
+      <div class="page" id="page-1" data-page-size="a4" aria-label="Page 1">
+        <div class="page-margins">
+          <div class="welcome">
+            <h1>No document is open</h1>
+            <p>Creating, opening and editing <code>.docx</code> files will be added in the next development phases.</p>
+            <p class="welcome-note">Everything runs on this computer. Documents never leave it.</p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="statusbar" aria-label="Status">
+      <span class="status-item" id="status-page">Page 1 of 1</span>
+      <span class="status-item" id="status-words">0 words</span>
+      <span class="status-item" id="status-save">No document</span>
+      <span class="status-spacer" aria-hidden="true"></span>
+      <span class="status-item status-connection" id="status-connection" data-state="connecting" role="status" aria-live="polite">
+        <span class="connection-dot" aria-hidden="true"></span><span id="status-connection-text">Connecting to local server…</span>
+      </span>
+    </footer>
+  </div>
+</body>
+</html>

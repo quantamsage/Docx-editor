@@ -1,0 +1,15 @@
+# Rust build output
+/target/
+
+# Node (used only to run frontend tests; no dependencies are installed)
+node_modules/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local documents used while trying the editor
+*.docx.tmp
+~$*.docx
