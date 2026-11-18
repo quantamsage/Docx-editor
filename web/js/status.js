@@ -1,13 +1,15 @@
 // Status-bar logic, kept free of DOM access so it can be unit tested.
 
 /**
- * Counts words the way word processors do: runs of letters, digits,
- * apostrophes and hyphens separated by whitespace or punctuation.
+ * Counts words the way word processors do: whitespace-separated tokens that
+ * contain at least one letter or digit ("3.50", "well-known" and "it's" are
+ * one word each; a lone dash is not a word).
  * @param {string} text
  */
 export function countWords(text) {
-  const matches = String(text ?? "").match(/[\p{L}\p{N}](?:[\p{L}\p{N}'’\-]*[\p{L}\p{N}])?/gu);
-  return matches ? matches.length : 0;
+  return String(text ?? "")
+    .split(/\s+/u)
+    .filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
 }
 
 /** "1 word", "12 words". */

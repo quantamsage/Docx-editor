@@ -1,0 +1,9 @@
+{
+  "name": "docx-editor-frontend-tests",
+  "private": true,
+  "description": "Runs the frontend unit tests with Node's built-in test runner. The application itself does not use Node.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/frontend/**/*.test.js\""
+  }
+}
