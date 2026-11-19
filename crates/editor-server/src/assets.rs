@@ -29,6 +29,8 @@ pub static STATIC_ASSETS: &[Asset] = &[
     asset!("js/app.js", "text/javascript; charset=utf-8"),
     asset!("js/api.js", "text/javascript; charset=utf-8"),
     asset!("js/status.js", "text/javascript; charset=utf-8"),
+    asset!("js/documents.js", "text/javascript; charset=utf-8"),
+    asset!("js/files.js", "text/javascript; charset=utf-8"),
     asset!("favicon.svg", "image/svg+xml"),
 ];
 

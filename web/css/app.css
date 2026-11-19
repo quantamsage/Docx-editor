@@ -20,13 +20,20 @@
   --ui-font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --doc-font: Calibri, Carlito, "Segoe UI", Arial, sans-serif;
 
-  /* Page geometry at 96 CSS px per inch. A4 = 210 × 297 mm, margins 1 inch. */
+  /* Default page geometry at 96 CSS px per inch: A4 (210 × 297 mm) with
+     1-inch margins. An open document's own page setup overrides these. */
   --page-width: 794px;
   --page-height: 1123px;
-  --page-margin: 96px;
+  --margin-top: 96px;
+  --margin-right: 96px;
+  --margin-bottom: 96px;
+  --margin-left: 96px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Elements with their own display value must still disappear when hidden. */
+[hidden] { display: none !important; }
 
 html, body { height: 100%; }
 
@@ -146,12 +153,15 @@ body {
   font-size: 11pt;
   line-height: 1.15;
 }
-.page[data-page-size="letter"] { --page-width: 816px; --page-height: 1056px; }
 
 /* Visible margin guides, as in a word processor's print layout. */
 .page-margins {
   position: absolute;
-  inset: var(--page-margin);
+  top: var(--margin-top);
+  right: var(--margin-right);
+  bottom: var(--margin-bottom);
+  left: var(--margin-left);
+  overflow: auto;
   outline: 1px dashed var(--margin-guide);
 }
 
@@ -181,9 +191,55 @@ body {
 /* Narrow windows: pages scale down instead of overflowing sideways. */
 @media (max-width: 860px) {
   .workspace { padding: 12px 8px 32px; }
-  .page { width: 100%; min-height: calc((100vw - 16px) * 1.414); --page-margin: 8%; }
+  .page { width: 100%; min-height: calc((100vw - 16px) * 1.414); }
+  .page-margins { inset: 8%; }
   .titlebar { grid-template-columns: auto 1fr; }
   .titlebar-spacer { display: none; }
   .tool-label:not(.visually-hidden) { display: none; }
   .statusbar { gap: 0.75rem; }
 }
+
+/* Notices (errors and warnings) */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #fde7e9;
+  color: var(--error);
+  border-bottom: 1px solid #f1bbbc;
+}
+.notice[data-kind="warning"] { background: #fff4ce; color: #5c4a00; border-color: #f2df8c; }
+.notice-text { flex: 1; }
+.notice-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+.notice-close:hover { background: rgba(0, 0, 0, 0.06); }
+
+/* Drag a .docx onto the workspace to open it. */
+.workspace.is-drop-target { outline: 3px dashed var(--title-bg); outline-offset: -8px; }
+
+/* Summary of an opened document (shown until the content view exists). */
+.doc-summary { font-family: var(--ui-font); color: var(--text); padding-top: 1rem; }
+.doc-summary h1 { font-size: 1.4rem; margin: 0 0 0.25rem; overflow-wrap: anywhere; }
+.doc-summary h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
+.summary-layout { color: var(--muted); margin: 0 0 1rem; }
+.summary-stats { list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0 0 1rem; }
+.summary-stats li { background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.85rem; }
+.summary-note { color: var(--muted); font-size: 0.85rem; line-height: 1.5; }
+.summary-warnings { color: #5c4a00; background: #fff4ce; padding: 0.5rem 0.5rem 0.5rem 1.5rem; border-radius: 4px; font-size: 0.85rem; }
+.outline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--chrome-border); }
+.outline li { padding: 0.15rem 0 0.15rem 0.75rem; overflow-wrap: anywhere; }
+.outline li[data-level="0"] { font-weight: 700; }
+.outline li[data-level="1"] { font-weight: 600; }
+.outline li[data-level="2"] { padding-left: 1.75rem; }
+.outline li[data-level="3"], .outline li[data-level="4"], .outline li[data-level="5"],
+.outline li[data-level="6"], .outline li[data-level="7"], .outline li[data-level="8"],
+.outline li[data-level="9"] { padding-left: 2.75rem; color: var(--muted); }

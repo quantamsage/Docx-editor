@@ -1,7 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { ApiError, getHealth, request } from "../../web/js/api.js";
+import {
+  ApiError,
+  closeDocument,
+  downloadDocument,
+  getDocument,
+  getHealth,
+  newDocument,
+  openDocument,
+  request,
+} from "../../web/js/api.js";
 
 /** Builds a fake fetch that records calls and returns the given response. */
 function fakeFetch(respond) {
@@ -91,4 +100,59 @@ test("only API paths may be requested", async () => {
     await assert.rejects(request(path, { fetchImpl }), { code: "invalid_path" });
   }
   assert.equal(fetchImpl.calls.length, 0);
+});
+
+test("newDocument posts to the create endpoint", async () => {
+  const info = { id: 1, name: "Untitled document.docx", modified: false, model: { blocks: [] } };
+  const fetchImpl = fakeFetch(() => jsonResponse(201, info));
+  assert.deepEqual(await newDocument({ fetchImpl }), info);
+  assert.equal(fetchImpl.calls[0].url, "/api/documents/new");
+  assert.equal(fetchImpl.calls[0].init.method, "POST");
+});
+
+test("openDocument sends the raw file with its name", async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(201, { id: 2, name: "Q3 report & notes.docx" }));
+  const file = new Blob(["PK fake"]);
+  const info = await openDocument(file, "Q3 report & notes.docx", { fetchImpl });
+  assert.equal(info.id, 2);
+  const { url, init } = fetchImpl.calls[0];
+  assert.equal(url, "/api/documents/open?name=Q3%20report%20%26%20notes.docx");
+  assert.equal(init.method, "POST");
+  assert.equal(init.body, file);
+  assert.equal(init.headers["Content-Type"], "application/octet-stream");
+});
+
+test("openDocument surfaces the server's explanation", async () => {
+  const fetchImpl = fakeFetch(() =>
+    jsonResponse(422, { error: { code: "unsupported_document", message: "The file is password-protected or uses the old .doc format." } }),
+  );
+  await assert.rejects(openDocument(new Blob(["x"]), "old.doc", { fetchImpl }), {
+    status: 422,
+    code: "unsupported_document",
+    message: "The file is password-protected or uses the old .doc format.",
+  });
+});
+
+test("downloadDocument returns a Blob and can rename", async () => {
+  const fetchImpl = fakeFetch(() => new Response(new Uint8Array([0x50, 0x4b, 3, 4]), { status: 200 }));
+  const blob = await downloadDocument(7, undefined, { fetchImpl });
+  assert.ok(blob instanceof Blob);
+  assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())], [0x50, 0x4b, 3, 4]);
+  assert.equal(fetchImpl.calls[0].url, "/api/documents/7/download");
+
+  await downloadDocument(7, "New name.docx", { fetchImpl });
+  assert.equal(fetchImpl.calls[1].url, "/api/documents/7/download?name=New%20name.docx");
+});
+
+test("downloadDocument errors are parsed as JSON", async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(404, { error: { code: "not_found", message: "That document is not open." } }));
+  await assert.rejects(downloadDocument(9, undefined, { fetchImpl }), { code: "not_found", status: 404 });
+});
+
+test("getDocument and closeDocument", async () => {
+  const fetchImpl = fakeFetch((url, init) => (init.method === "DELETE" ? new Response(null, { status: 204 }) : jsonResponse(200, { id: 3 })));
+  assert.deepEqual(await getDocument(3, { fetchImpl }), { id: 3 });
+  await closeDocument(3, { fetchImpl });
+  assert.equal(fetchImpl.calls[1].url, "/api/documents/3");
+  assert.equal(fetchImpl.calls[1].init.method, "DELETE");
 });

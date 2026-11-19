@@ -24,16 +24,16 @@
 
     <nav class="toolbar toolbar-main" aria-label="File and editing">
       <div class="toolbar-group" role="group" aria-label="File">
-        <button type="button" class="tool" data-action="new" disabled title="New document (Ctrl+N) — not available yet">
+        <button type="button" class="tool" data-action="new" title="New blank document">
           <span class="tool-icon" aria-hidden="true">🗋</span><span class="tool-label">New</span>
         </button>
-        <button type="button" class="tool" data-action="open" disabled title="Open a .docx file (Ctrl+O) — not available yet">
+        <button type="button" class="tool" data-action="open" title="Open a Word document (Ctrl+O)">
           <span class="tool-icon" aria-hidden="true">📂</span><span class="tool-label">Open</span>
         </button>
-        <button type="button" class="tool" data-action="save" disabled title="Save (Ctrl+S) — not available yet">
+        <button type="button" class="tool" data-action="save" disabled title="Save (Ctrl+S)">
           <span class="tool-icon" aria-hidden="true">💾</span><span class="tool-label">Save</span>
         </button>
-        <button type="button" class="tool" data-action="save-as" disabled title="Save as a different file — not available yet">
+        <button type="button" class="tool" data-action="save-as" disabled title="Save as a different file (Ctrl+Shift+S)">
           <span class="tool-label">Save as…</span>
         </button>
       </div>
@@ -101,14 +101,29 @@
       </div>
     </nav>
 
+    <div class="notice" id="notice" role="alert" hidden>
+      <span class="notice-text" id="notice-text"></span>
+      <button type="button" class="notice-close" id="notice-close" aria-label="Dismiss">×</button>
+    </div>
+
     <main class="workspace" id="workspace" aria-label="Document">
       <div class="page" id="page-1" data-page-size="a4" aria-label="Page 1">
         <div class="page-margins">
-          <div class="welcome">
+          <div class="welcome" id="welcome">
             <h1>No document is open</h1>
-            <p>Creating, opening and editing <code>.docx</code> files will be added in the next development phases.</p>
+            <p>Choose <strong>New</strong> to start a blank document, or <strong>Open</strong> (or drop a <code>.docx</code> file here) to load one from your computer.</p>
             <p class="welcome-note">Everything runs on this computer. Documents never leave it.</p>
           </div>
+          <section class="doc-summary" id="doc-summary" aria-labelledby="summary-title" hidden>
+            <h1 id="summary-title"></h1>
+            <p class="summary-layout" id="summary-layout"></p>
+            <ul class="summary-stats" id="summary-stats"></ul>
+            <p class="summary-note" id="summary-preserved" hidden></p>
+            <ul class="summary-warnings" id="summary-warnings" hidden></ul>
+            <h2 id="outline-title" hidden>Outline</h2>
+            <ol class="outline" id="outline" aria-labelledby="outline-title" hidden></ol>
+            <p class="summary-note">Viewing and editing the document text is not available yet. Saving writes the document back with all of its content and formatting.</p>
+          </section>
         </div>
       </div>
     </main>
