@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(out, "<w:jc w:val=\"center\"/>");
 
         el.set_attr("w:val", Some(W), "a\"b<c");
-        assert!(el.remove_attr(Some(W), "missing") == false);
+        assert!(!el.remove_attr(Some(W), "missing"));
         let mut out = String::new();
         el.write_to(&mut out);
         assert_eq!(out, "<w:jc w:val=\"a&quot;b&lt;c\"/>");

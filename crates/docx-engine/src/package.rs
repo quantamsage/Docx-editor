@@ -147,6 +147,12 @@ impl Package {
     /// Writes the package as a ZIP archive, keeping part order, compression
     /// methods and timestamps.
     pub fn write(&self) -> Result<Vec<u8>> {
+        self.write_with(&[])
+    }
+
+    /// Writes the package with the contents of some parts replaced, without
+    /// modifying (or copying) the package itself.
+    pub fn write_with(&self, replacements: &[(&str, &[u8])]) -> Result<Vec<u8>> {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         for part in &self.parts {
             let method = match part.compression {
@@ -157,10 +163,14 @@ impl Package {
             if let Some(modified) = part.modified {
                 options = options.last_modified_time(modified);
             }
+            let data = replacements
+                .iter()
+                .find(|(name, _)| name.trim_start_matches('/').eq_ignore_ascii_case(&part.name))
+                .map_or(part.data.as_slice(), |(_, data)| data);
             writer
                 .start_file(part.name.as_str(), options)
                 .map_err(|e| DocxError::Write(format!("{}: {e}", part.name)))?;
-            writer.write_all(&part.data).map_err(|e| DocxError::Write(format!("{}: {e}", part.name)))?;
+            writer.write_all(data).map_err(|e| DocxError::Write(format!("{}: {e}", part.name)))?;
         }
         let cursor = writer.finish().map_err(|e| DocxError::Write(e.to_string()))?;
         Ok(cursor.into_inner())
