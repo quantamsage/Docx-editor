@@ -2,8 +2,11 @@
 //!
 //! * `GET /` — the editor page.
 //! * `GET /static/{*path}` — embedded CSS, JavaScript and images.
-//! * `/api/...` — JSON API used by the frontend. Unknown API routes return a
-//!   JSON 404 so the frontend can always parse errors.
+//! * `/api/health` — liveness check used by the status bar.
+//! * `/api/documents/...` — open, create, inspect, download and close
+//!   documents (see [`crate::documents`]).
+//! * Unknown API routes return a JSON 404 so the frontend can always parse
+//!   errors.
 
 use axum::Json;
 use axum::Router;
@@ -15,15 +18,25 @@ use axum::routing::get;
 use serde::Serialize;
 
 use crate::assets::{self, Asset};
+use crate::documents::{self, AppState};
 use crate::error::ApiError;
 use crate::security;
 
 /// Application name reported by the API.
 pub const APP_NAME: &str = "docx-editor";
 
-/// Builds the application router with all middleware.
+/// Builds the application router with all middleware and fresh state.
 pub fn router() -> Router {
-    let api = Router::new().route("/health", get(health)).fallback(api_not_found);
+    router_with_state(AppState::default())
+}
+
+/// Builds the application router around existing state.
+pub fn router_with_state(state: AppState) -> Router {
+    let api = Router::new()
+        .route("/health", get(health))
+        .nest("/documents", documents::routes())
+        .fallback(api_not_found)
+        .with_state(state);
 
     Router::new()
         .route("/", get(index))

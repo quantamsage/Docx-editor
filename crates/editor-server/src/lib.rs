@@ -1,12 +1,13 @@
 //! Local web-based DOCX editor: HTTP server and embedded frontend.
 //!
 //! The server is a thin layer: it serves the frontend and exposes a JSON API.
-//! Document processing will live in a separate engine crate that has no
+//! Document processing lives in the `docx-engine` crate, which has no
 //! knowledge of HTTP.
 
 pub mod app;
 pub mod assets;
 pub mod config;
+pub mod documents;
 pub mod error;
 pub mod security;
 
