@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/editor-server"]
+members = ["crates/docx-engine", "crates/editor-server"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,3 +17,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+zip = { version = "9.7", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+quick-xml = "0.42"
+docx-engine = { path = "crates/docx-engine" }
