@@ -11,6 +11,7 @@
 
 pub mod error;
 pub mod package;
+pub mod xml;
 
 pub use error::{DocxError, Result};
 pub use package::{Compression, Limits, Package, Part};
