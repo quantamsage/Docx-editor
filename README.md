@@ -2,7 +2,7 @@
 
 A local, web-based editor for Microsoft Word `.docx` documents. A Rust (Axum/Tokio) server runs on your computer and serves a Word-style interface built with plain HTML, CSS and JavaScript. Nothing is sent over the internet.
 
-> **Status: Phase 2 (document engine).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop) and save them again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing their content or formatting. The page shows the document's real page size and margins, a summary of what it contains, and an outline of its headings. Displaying and editing the text comes in Phase 3. Formatting controls stay disabled until their phases.
+> **Status: Phase 3 (editing).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop), edit their text and paragraphs on a page with the document's real size and margins, and save them again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing content or formatting you didn't touch. Formatting controls, table editing, undo and find & replace come in later phases and stay disabled until then.
 
 ## Requirements
 
@@ -36,6 +36,15 @@ Set `RUST_LOG=debug` for more detailed logs. The server only listens on `127.0.0
 
 What is preserved: everything. Parts of the file that were not edited are written back byte-for-byte (styles, headers, footers, images, comments, footnotes, numbering, custom XML, settings, …), and inside the main document only edited paragraphs change. See [ARCHITECTURE.md](ARCHITECTURE.md#preservation-guarantees) for details and limitations.
 
+## Editing
+
+- Click in the page and type. Text you type takes the formatting of the text around it; unchanged runs keep their exact formatting.
+- **Enter** starts a new paragraph with the same paragraph style and properties (a heading continues as a heading), **Shift+Enter** inserts a line break, **Tab** a tab character.
+- **Backspace** at the start of a paragraph joins it to the previous one; **Delete** at the end joins the next one. Selecting across paragraphs and typing or deleting replaces the selection.
+- **Paste** inserts plain text; each line becomes a paragraph.
+- Images, hyperlinks, page breaks and preserved content are shown as protected objects: you can type around them and delete images or links, but not edit inside them yet. Fields (such as page numbers) and comment markers are always kept. Tables and content controls are shown read-only.
+- Changes are applied to the document in the editor as you type. The title bar shows "Unsaved changes" until you save, and closing the tab asks first.
+
 ## Tests
 
 ```sh
@@ -45,7 +54,7 @@ cargo fmt --check              # formatting
 npm test                       # frontend unit tests (Node's built-in test runner; nothing to install)
 
 cargo build --release
-npm run test:browser           # drives the real interface in headless Edge/Chrome
+npm run test:browser           # drives the real interface in headless Edge/Chrome (types, presses Enter/Backspace/Delete, edits a Word file)
 ```
 
 Word compatibility checks (Windows with Microsoft Word installed):

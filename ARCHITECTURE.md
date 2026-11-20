@@ -22,10 +22,12 @@ crates/docx-engine/
   src/read.rs                  builds the model from document.xml and styles.xml
   src/model.rs                 serializable read model (blocks, runs, tables, section, styles)
   src/props.rs                 schema-ordered property insertion (w:pPr)
-  src/document.rs              Document: open, model, edit, save
+  src/edit.rs                  editing operations (Splice, Piece, Edit) sent by the editor
+  src/document.rs              Document: open, model, edit (splice, apply), save
   src/blank.rs                 template for new documents
   tests/engine.rs              synthetic "hard cases" document: parsing, preservation, edits, errors
   tests/word_fixture.rs        tests against a document written by Microsoft Word
+  tests/splice.rs              typing, Enter, joining, cross-paragraph deletes, paste, sections, atomicity
   examples/docx_tool.rs        inspect/edit files from the command line
 crates/editor-server/
   src/main.rs                  CLI entry: parse args → bind 127.0.0.1:<port> → open browser → serve
@@ -35,6 +37,7 @@ crates/editor-server/
   src/security.rs              loopback Host check, cross-origin check, security headers
   src/config.rs, error.rs      CLI configuration; ApiError → JSON
   tests/http.rs, documents.rs  router and API integration tests
+  tests/edits.rs               edit and image endpoints
 web/
   index.html, css/app.css      application shell
   js/app.js                    entry point: toolbar, shortcuts, drag & drop, rendering
@@ -42,6 +45,10 @@ web/
   js/files.js                  file pickers, saving to handles, downloads
   js/documents.js              interpreting the model: page geometry, summary, outline
   js/status.js                 status bar: word count, page position, connection monitor
+  js/editor/content.js         model ⇄ editable segments ⇄ splice pieces (no DOM; unit-tested)
+  js/editor/render.js          model → editable page (paragraphs, runs, objects, read-only tables)
+  js/editor/dom.js             reading the page: segments, caret offsets, selection
+  js/editor/editor.js          input handling, background sync, structural edits, recovery
 tests/frontend/                Node test-runner tests for web/js modules
 tests/browser/smoke.mjs        headless-browser test of the real interface
 tests/fixtures/word-sample.docx  document produced by Microsoft Word (see scripts/)
@@ -79,12 +86,43 @@ The spec's central requirement is that editing a small part of a document leaves
 ### Known limitations
 
 - The ZIP container is rebuilt on save: part contents are identical, but compressed sizes and archive metadata may differ from the original file (the archive is written by the `zip` crate's deflate implementation).
-- Paragraph-level edits replace the text of all plain runs in the paragraph with a single run that has the first run's formatting. Character-level edits that keep mixed formatting arrive with the editing surface (Phase 3).
+- Editing replaces only the runs whose text changed; new text copies the formatting (`w:rPr`) of the run it was typed into. Markers (bookmarks, comment ranges, permission ranges, proofing marks) keep their order, but new text is placed where the first removed run was, so a bookmark or comment range next to edited text can end up just before or after the new text rather than around it.
 - Deleting a paragraph that carries a section break is refused (it would merge two sections' page layouts).
 - Content controls (`w:sdt`), tracked changes, fields and similar constructs are preserved and their text is shown in the model, but they are not editable.
 - Documents that bind the WordprocessingML namespace as the default namespace are supported; the engine declares a `w:` prefix on the root when it first needs to write attributes. Strict OOXML documents are read; their edits are untested against Word.
 - UTF-16 encoded parts are rejected; Word always writes UTF-8.
 - Documents are kept in memory while open (at most 32 at a time, 100 MiB per upload).
+
+## Editing
+
+### Edit operations
+
+Every text edit is a **splice** (`docx_engine::Splice`): paragraphs `first..=last` are replaced by a list of pieces:
+
+- `keep {block, inline}` keeps an existing inline element (run, hyperlink, image, field run, preserved element) exactly as it is;
+- `text {text, like?}` adds a new run, copying the run properties of the run `like` (`\t` and `\n` become `w:tab` and `w:br`);
+- `break` ends the paragraph and starts a new one.
+
+Inlines are addressed by their index in the model (`blocks[b].inlines[i]`), which counts the paragraph's children except `w:pPr` and markers. The engine walks the original children of the affected paragraphs in order: kept inlines and markers stay in order, unkept inlines are removed, and new text and breaks are inserted at the first removed inline (where the edit happened) or before the next kept one. The first resulting paragraph reuses the first paragraph's element and properties; paragraphs created by a break copy those properties (without paraIds). A section break carried by the last paragraph moves to the last resulting paragraph; a splice that would remove a section break in between is refused. Splices require every block in the range to be a paragraph, so selections across tables are refused.
+
+Typing (one paragraph), Enter, Shift+Enter, joining paragraphs with Backspace/Delete, deleting or typing over a selection across paragraphs, and pasting are all splices, so one tested operation covers them. `Document::apply` runs a batch atomically (the XML tree is restored if any edit fails).
+
+### Editor ⇄ server
+
+The editor renders paragraphs as `<p data-block>`, text runs as `<span data-kind="run" data-i>` and other inlines as non-editable `<span data-kind="object" data-i>`.
+
+- **Inside a paragraph** the browser handles typing and deleting. The paragraph is marked dirty; 400 ms after typing pauses, the editor reads it back into segments (`dom.js`), turns them into pieces (`content.js`: text equal to its run's text is kept, changed text becomes new text like its run), and sends one splice per dirty paragraph. The page is not re-rendered: its `data-i` labels are remapped to the new model's indices, so the caret never moves and text typed while the request was out is sent next time.
+- **Structural edits** (Enter, Shift+Enter, Backspace/Delete at a paragraph edge, typing/deleting over a multi-paragraph selection, paste) are intercepted in `beforeinput`, sent as one splice after pending typing, and the page is re-rendered from the server's model with the caret at the computed position. Input arriving while one is in flight is queued and replayed.
+- Invisible objects (field codes, comment references) are "sticky": the editor always keeps them, even when the browser deleted them or they are inside a deleted range, so fields are never left half-deleted.
+- Requests run strictly in order and name the document's **revision**; the server refuses edits based on an older revision (`409 stale_revision`). If any edit fails, the editor reloads the document from the server and shows why.
+- Undo/redo, formatting commands, drag-and-drop of content and rich paste are blocked until their phases.
+
+### Limitations (Phase 3)
+
+- Pages are one continuous sheet with dashed lines at each page height; real pagination (where Word would break pages) comes with page layout (Phase 5). The page count in the status bar is estimated from the height.
+- Tables, content controls and text inside hyperlinks are shown but not editable yet; list numbering is shown as a bullet.
+- Each sync returns the whole document model, which is fine for typical documents but grows with very large ones.
+- Floating images are shown inline.
 
 ## Safety when opening files
 
@@ -99,9 +137,11 @@ The spec's central requirement is that editing a small part of a document leaves
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/health` | Liveness and version (status bar). |
-| `POST /api/documents/new` | Create a blank document → `{id, name, modified, model}`. |
+| `POST /api/documents/new` | Create a blank document → `{id, name, modified, revision, model}`. |
 | `POST /api/documents/open?name=…` | Body: the `.docx` bytes. Opens it → `{id, name, modified, model}`. |
 | `GET /api/documents/{id}` | The document's current model. |
+| `POST /api/documents/{id}/edits` | Body `{base_revision, edits: [...]}`: applies the edits atomically → the updated document. `409 stale_revision` if the revision is outdated, `400 invalid_edit` if an edit is invalid (nothing is changed). |
+| `GET /api/documents/{id}/media/{part}` | An image part the document references (PNG, JPEG, GIF, BMP, WebP only), for display. |
 | `GET /api/documents/{id}/download[?name=…]` | The saved `.docx`; `name` renames the document (Save As). |
 | `DELETE /api/documents/{id}` | Close the document. |
 
