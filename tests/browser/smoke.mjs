@@ -151,24 +151,103 @@ async function main() {
     check(await evaluate(`document.querySelector('[data-action="save"]').disabled`), "Save is disabled with no document");
     check(await evaluate(`getComputedStyle(document.getElementById("notice")).display === "none"`), "notice bar is hidden at start");
 
-    // New document.
+    // Helpers for editing: real key presses and typing through DevTools.
+    const press = async (key, code, keyCode) => {
+      await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key, code, windowsVirtualKeyCode: keyCode });
+      if (key === "Enter") await cdp.send("Input.dispatchKeyEvent", { type: "char", key, code, text: "\r", windowsVirtualKeyCode: keyCode });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: keyCode });
+    };
+    const type = (value) => cdp.send("Input.insertText", { text: value });
+    // Puts the caret `offset` characters into the text of block `block`.
+    const caretAt = (block, offset) =>
+      evaluate(`(() => {
+        const content = document.getElementById("doc-content");
+        content.focus();
+        const p = content.querySelector('[data-block="${block}"]');
+        const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        let left = ${offset}, node, range = document.createRange();
+        range.setStart(p, 0);
+        while ((node = walker.nextNode())) {
+          if (left <= node.data.length) { range.setStart(node, left); break; }
+          left -= node.data.length;
+        }
+        range.collapse(true);
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+      })()`);
+    const serverTexts = (id) =>
+      evaluate(`fetch("/api/documents/${id}").then((r) => r.json()).then((d) => JSON.stringify(d.model.blocks.filter((b) => b.type === "paragraph").map((b) => (b.inlines || []).flatMap((i) => i.content || []).map((c) => c.text || "").join(""))))`);
+    const waitForServer = async (id, expected) => {
+      const want = JSON.stringify(expected);
+      const deadline = Date.now() + 8000;
+      let got;
+      while (Date.now() < deadline) {
+        got = await serverTexts(id);
+        if (got === want) return true;
+        await sleep(150);
+      }
+      console.log(`     server has ${got}`);
+      return false;
+    };
+
+    // New document: type, Enter, Backspace.
     await evaluate(`document.querySelector('[data-action="new"]').click()`);
-    check(await waitFor(`!document.getElementById("doc-summary").hidden`), "New shows a document");
+    check(await waitFor(`!document.getElementById("doc-content").hidden && document.querySelectorAll("#doc-content .para").length === 1`), "New shows an empty editable page");
     check((await text("document-name")) === "Untitled document.docx", "new document is untitled");
     check((await text("save-state")) === "Not saved yet", "new document is marked not saved");
-    check((await text("summary-layout")) === "Page layout: A4, portrait", "blank document is A4 portrait");
+    check((await evaluate(`document.querySelector("#workspace .page").getAttribute("aria-label")`)).includes("A4, portrait"), "blank document is A4 portrait");
     check(!(await evaluate(`document.querySelector('[data-action="save"]').disabled`)), "Save is enabled");
 
-    // Open the Word fixture by dropping it.
+    await caretAt(0, 0);
+    await type("Hello world");
+    await press("Enter", "Enter", 13);
+    await type("Second paragraph");
+    check(await waitForServer(1, ["Hello world", "Second paragraph"]), "typing and Enter reach the document");
+    check((await text("save-state")) === "Unsaved changes", "edits mark the document unsaved");
+    check((await text("status-words")) === "4 words", `word count follows edits (${await text("status-words")})`);
+
+    await caretAt(1, 0);
+    await press("Backspace", "Backspace", 8);
+    check(await waitForServer(1, ["Hello worldSecond paragraph"]), "Backspace at a paragraph start joins paragraphs");
+    check((await evaluate(`document.querySelectorAll("#doc-content .para").length`)) === 1, "the page shows one paragraph");
+    await type(" and more");
+    await caretAt(0, 5);
+    await press("Delete", "Delete", 46);
+    check(await waitForServer(1, ["Helloworld and moreSecond paragraph"]), "after a join the caret is at the join point; Delete works inside a paragraph");
+
+    // Open the Word fixture by dropping it (accept the discard prompt).
+    await evaluate(`window.confirm = () => true`);
     await drop(readFileSync(FIXTURE).toString("base64"), "word-sample.docx");
     check(await waitFor(`document.getElementById("document-name").textContent === "word-sample.docx"`), "dropping a .docx opens it");
     check((await text("save-state")) === "Opened", "opened document state");
     check(await evaluate(`getComputedStyle(document.getElementById("notice")).display === "none"`), "no notice after a successful open");
-    const stats = await evaluate(`[...document.querySelectorAll("#summary-stats li")].map((li) => li.textContent)`);
-    check(stats.includes("1 table") && stats.includes("1 image") && stats.includes("1 hyperlink"), `summary lists content (${stats.join(", ")})`);
-    const headings = await evaluate(`[...document.querySelectorAll("#outline li")].map((li) => li.textContent)`);
-    check(headings[0] === "Quarterly Report" && headings.includes("Appendix"), `outline lists headings (${headings.join(" / ")})`);
+    check((await evaluate(`document.querySelector("#doc-content .para-title")?.textContent`)) === "Quarterly Report", "the title is rendered with its style");
+    check((await evaluate(`document.querySelector("#doc-content .para-heading-1")?.textContent`)) === "Summary", "headings are rendered with their style");
+    check(await evaluate(`document.querySelectorAll("#doc-content .table-wrap td").length > 0`), "tables are rendered");
+    check(await waitFor(`[...document.querySelectorAll("#doc-content .obj-image img")].some((img) => img.complete && img.naturalWidth > 0)`), "images are loaded from the document");
+    check(await evaluate(`document.querySelectorAll("#doc-content .obj-link").length > 0`), "hyperlinks are shown");
     check((await text("status-words")).endsWith("words") && (await text("status-words")) !== "0 words", "status bar shows the word count");
+
+    // Replace a word in the title; its style and formatting stay.
+    const headingBlock = await evaluate(`Number(document.querySelector("#doc-content .para-title").dataset.block)`);
+    await evaluate(`(() => {
+      const span = document.querySelector('#doc-content [data-block="${headingBlock}"] [data-kind="run"]');
+      const node = span.firstChild;
+      const range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, "Quarterly".length);
+      document.getElementById("doc-content").focus();
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+    })()`);
+    await type("Annual");
+    const before = JSON.parse(await serverTexts(2));
+    check(
+      await waitFor(`fetch("/api/documents/2").then((r) => r.json()).then((d) => d.model.blocks[${headingBlock}].inlines.map((i) => (i.content || []).map((c) => c.text || "").join("")).join("") === "Annual Report" && d.model.blocks[${headingBlock}].style_id === "Title")`),
+      "editing the title keeps its style",
+    );
+    const after = JSON.parse(await serverTexts(2));
+    check(after.length === before.length && after.slice(1).join("|") === before.slice(1).join("|"), "other paragraphs are unchanged");
 
     if (process.env.SCREENSHOT) {
       await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });

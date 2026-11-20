@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   ApiError,
+  applyEdits,
   closeDocument,
   downloadDocument,
   getDocument,
   getHealth,
+  mediaUrl,
   newDocument,
   openDocument,
   request,
@@ -155,4 +157,25 @@ test("getDocument and closeDocument", async () => {
   await closeDocument(3, { fetchImpl });
   assert.equal(fetchImpl.calls[1].url, "/api/documents/3");
   assert.equal(fetchImpl.calls[1].init.method, "DELETE");
+});
+
+test("applyEdits posts the base revision and edits as JSON", async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(200, { id: 3, revision: 5, model: { blocks: [] } }));
+  const edits = [{ op: "splice", first: 0, last: 0, content: [{ type: "text", text: "Hi" }] }];
+  const result = await applyEdits(3, 4, edits, { fetchImpl });
+  assert.equal(result.revision, 5);
+  const { url, init } = fetchImpl.calls[0];
+  assert.equal(url, "/api/documents/3/edits");
+  assert.equal(init.method, "POST");
+  assert.deepEqual(JSON.parse(init.body), { base_revision: 4, edits });
+});
+
+test("applyEdits surfaces stale revisions", async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(409, { error: { code: "stale_revision", message: "The document changed." } }));
+  await assert.rejects(applyEdits(3, 1, [], { fetchImpl }), (err) => err instanceof ApiError && err.code === "stale_revision" && err.status === 409);
+});
+
+test("mediaUrl encodes each part segment", () => {
+  assert.equal(mediaUrl(2, "word/media/image 1.png"), "/api/documents/2/media/word/media/image%201.png");
+  assert.equal(mediaUrl(2, "word/media/a#b.png"), "/api/documents/2/media/word/media/a%23b.png");
 });

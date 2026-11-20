@@ -1,16 +1,18 @@
 // Entry point: wires the interface to the local server.
 
 import { closeDocument, downloadDocument, getHealth, newDocument, openDocument } from "./api.js";
-import { ensureDocxExtension, outline, pageGeometry, preservedNote, summarize } from "./documents.js";
+import { ensureDocxExtension, pageGeometry } from "./documents.js";
+import { createEditor } from "./editor/editor.js";
 import { downloadBlob, pickFile, pickSaveLocation, supportsFileSystemAccess, writeToHandle } from "./files.js";
 import { connectionLabel, createConnectionMonitor, formatPagePosition, formatWordCount } from "./status.js";
 
 /**
  * The open document, or null.
- * @type {{id: number, name: string, model: object, handle: FileSystemFileHandle|null, savedAt: Date|null, isNew: boolean}|null}
+ * @type {{id: number, name: string, model: object, handle: FileSystemFileHandle|null, savedAt: Date|null, isNew: boolean, unsaved: boolean}|null}
  */
 let current = null;
 let busy = false;
+let editor = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -25,18 +27,38 @@ function renderConnection(status) {
 
 function saveStateText() {
   if (!current) return "No document open";
+  if (current.unsaved) return "Unsaved changes";
   if (current.savedAt) return `Saved at ${current.savedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   return current.isNew ? "Not saved yet" : "Opened";
 }
 
+/** Page count and the page the caret is on, from the rendered height. */
+function pagePosition() {
+  const page = document.querySelector("#workspace .page");
+  const pageHeight = parseFloat(getComputedStyle(page).getPropertyValue("--page-height")) || page.clientHeight || 1;
+  const total = Math.max(1, Math.ceil((page.scrollHeight - 1) / pageHeight));
+  let currentPage = 1;
+  const selection = document.getSelection();
+  if (current && selection && selection.rangeCount && $("doc-content").contains(selection.anchorNode)) {
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    const top = rect.top || (selection.anchorNode.parentElement || page).getBoundingClientRect().top;
+    currentPage = Math.min(total, Math.max(1, Math.floor((top - page.getBoundingClientRect().top) / pageHeight) + 1));
+  }
+  return { currentPage, total };
+}
+
+function renderStatus() {
+  const { currentPage, total } = pagePosition();
+  $("status-page").textContent = formatPagePosition(currentPage, total);
+  $("status-words").textContent = formatWordCount(current ? current.model.stats.words : 0);
+  $("status-save").textContent = current ? saveStateText() : "No document";
+  $("save-state").textContent = saveStateText();
+}
+
 function renderDocument() {
   const name = current ? current.name : "Untitled document";
-  document.title = `${name} – DOCX Editor`;
+  document.title = `${current && current.unsaved ? "• " : ""}${name} – DOCX Editor`;
   $("document-name").textContent = name;
-  $("save-state").textContent = saveStateText();
-  $("status-save").textContent = current ? saveStateText() : "No document";
-  $("status-page").textContent = formatPagePosition(1, document.querySelectorAll("#workspace .page").length);
-  $("status-words").textContent = formatWordCount(current ? current.model.stats.words : 0);
 
   for (const action of ["save", "save-as"]) {
     document.querySelector(`[data-action="${action}"]`).disabled = busy || !current;
@@ -46,9 +68,10 @@ function renderDocument() {
   }
 
   $("welcome").hidden = Boolean(current);
-  $("doc-summary").hidden = !current;
+  $("doc-content").hidden = !current;
+  document.querySelector("#workspace .page").classList.toggle("has-document", Boolean(current));
   applyPageGeometry(current ? current.model.section : null);
-  if (current) renderSummary(current);
+  renderStatus();
 }
 
 function applyPageGeometry(section) {
@@ -61,36 +84,8 @@ function applyPageGeometry(section) {
   page.style.setProperty("--margin-bottom", `${geometry.margins.bottom}px`);
   page.style.setProperty("--margin-left", `${geometry.margins.left}px`);
   page.dataset.orientation = geometry.landscape ? "landscape" : "portrait";
-  page.setAttribute("aria-label", `Page 1 (${geometry.label})`);
+  page.setAttribute("aria-label", `Document page (${geometry.label})`);
   return geometry;
-}
-
-function fillList(list, items, render) {
-  list.replaceChildren(...items.map((item) => {
-    const li = document.createElement("li");
-    render(li, item);
-    return li;
-  }));
-  list.hidden = items.length === 0;
-}
-
-function renderSummary(doc) {
-  const { model } = doc;
-  $("summary-title").textContent = doc.name;
-  $("summary-layout").textContent = `Page layout: ${pageGeometry(model.section).label}`;
-  fillList($("summary-stats"), summarize(model), (li, text) => (li.textContent = text));
-
-  const note = preservedNote(model);
-  $("summary-preserved").textContent = note;
-  $("summary-preserved").hidden = !note;
-  fillList($("summary-warnings"), model.warnings || [], (li, text) => (li.textContent = text));
-
-  const headings = outline(model);
-  fillList($("outline"), headings, (li, heading) => {
-    li.textContent = heading.text;
-    li.dataset.level = String(heading.level);
-  });
-  $("outline-title").hidden = headings.length === 0;
 }
 
 // ----- Notices -----
@@ -129,20 +124,30 @@ function renderButtonsOnly() {
   }
 }
 
+/** Asks before discarding unsaved changes. */
+function confirmDiscard() {
+  if (!current || (!current.unsaved && !editor.hasPendingChanges())) return true;
+  return window.confirm(`“${current.name}” has unsaved changes. Discard them?`);
+}
+
 /** Replaces the open document, closing the previous one on the server. */
 function setCurrent(info, { handle = null, isNew = false } = {}) {
   const previous = current;
-  current = { id: info.id, name: info.name, model: info.model, handle, savedAt: null, isNew };
+  current = { id: info.id, name: info.name, model: info.model, handle, savedAt: null, isNew, unsaved: false };
+  editor.load(info);
   if (previous) closeDocument(previous.id).catch(() => {});
 }
 
 function createNew() {
+  if (!confirmDiscard()) return;
   return run("Creating…", async () => {
     setCurrent(await newDocument(), { isNew: true });
+    focusEditor();
   });
 }
 
 function openFile(file, handle = null) {
+  if (!confirmDiscard()) return;
   return run(`Opening ${file.name}…`, async () => {
     const info = await openDocument(file, file.name);
     setCurrent(info, { handle });
@@ -164,10 +169,21 @@ async function chooseAndOpen() {
   if (picked) await openFile(picked.file, picked.handle);
 }
 
+/** Sends pending edits; returns false if they could not be applied. */
+async function flushEdits() {
+  try {
+    await editor.flush();
+    return true;
+  } catch {
+    return false; // the editor reloaded the document and showed why
+  }
+}
+
 /** Saves to the current file if possible, otherwise asks where to save. */
-function save() {
+async function save() {
   if (!current) return;
   if (!current.handle && supportsFileSystemAccess()) return saveAs();
+  if (!(await flushEdits())) return;
   return run("Saving…", async () => {
     const blob = await downloadDocument(current.id);
     if (current.handle) {
@@ -175,8 +191,7 @@ function save() {
     } else {
       downloadBlob(blob, current.name);
     }
-    current.savedAt = new Date();
-    current.isNew = false;
+    markSaved();
   });
 }
 
@@ -198,6 +213,7 @@ async function saveAs() {
     if (answer === null) return;
     name = ensureDocxExtension(answer);
   }
+  if (!(await flushEdits())) return;
 
   await run("Saving…", async () => {
     const blob = await downloadDocument(current.id, name);
@@ -208,9 +224,19 @@ async function saveAs() {
       downloadBlob(blob, name);
     }
     current.name = name;
-    current.savedAt = new Date();
-    current.isNew = false;
+    markSaved();
   });
+}
+
+function markSaved() {
+  current.savedAt = new Date();
+  current.isNew = false;
+  current.unsaved = editor.hasPendingChanges();
+}
+
+function focusEditor() {
+  const content = $("doc-content");
+  content.focus();
 }
 
 // ----- Wiring -----
@@ -263,7 +289,43 @@ function bindDragAndDrop() {
   });
 }
 
+function bindEditor() {
+  editor = createEditor($("doc-content"), {
+    onChange(doc) {
+      if (!current || current.id !== doc.id) return;
+      current.model = doc.model;
+      current.unsaved = true;
+      renderDocument();
+    },
+    onError(message) {
+      showNotice(message);
+    },
+    onInfo(message) {
+      showNotice(message, "warning");
+    },
+  });
+  // Typing changes the page count and the caret's page.
+  $("doc-content").addEventListener("input", () => {
+    if (current && !current.unsaved) {
+      current.unsaved = true;
+      renderDocument();
+    } else {
+      renderStatus();
+    }
+  });
+  document.addEventListener("selectionchange", () => {
+    if (current) renderStatus();
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (current && (current.unsaved || editor.hasPendingChanges())) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+}
+
 function init() {
+  bindEditor();
   bindToolbar();
   bindShortcuts();
   bindDragAndDrop();

@@ -13,6 +13,7 @@
   --page-bg: #ffffff;
   --page-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.16);
   --margin-guide: rgba(43, 87, 154, 0.25);
+  --page-boundary: rgba(0, 0, 0, 0.18);
   --ok: #107c10;
   --warn: #c19c00;
   --error: #a4262c;
@@ -226,20 +227,78 @@ body {
 /* Drag a .docx onto the workspace to open it. */
 .workspace.is-drop-target { outline: 3px dashed var(--title-bg); outline-offset: -8px; }
 
-/* Summary of an opened document (shown until the content view exists). */
-.doc-summary { font-family: var(--ui-font); color: var(--text); padding-top: 1rem; }
-.doc-summary h1 { font-size: 1.4rem; margin: 0 0 0.25rem; overflow-wrap: anywhere; }
-.doc-summary h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
-.summary-layout { color: var(--muted); margin: 0 0 1rem; }
-.summary-stats { list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0 0 1rem; }
-.summary-stats li { background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.85rem; }
-.summary-note { color: var(--muted); font-size: 0.85rem; line-height: 1.5; }
-.summary-warnings { color: #5c4a00; background: #fff4ce; padding: 0.5rem 0.5rem 0.5rem 1.5rem; border-radius: 4px; font-size: 0.85rem; }
-.outline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--chrome-border); }
-.outline li { padding: 0.15rem 0 0.15rem 0.75rem; overflow-wrap: anywhere; }
-.outline li[data-level="0"] { font-weight: 700; }
-.outline li[data-level="1"] { font-weight: 600; }
-.outline li[data-level="2"] { padding-left: 1.75rem; }
-.outline li[data-level="3"], .outline li[data-level="4"], .outline li[data-level="5"],
-.outline li[data-level="6"], .outline li[data-level="7"], .outline li[data-level="8"],
-.outline li[data-level="9"] { padding-left: 2.75rem; color: var(--muted); }
+/* ----- Document content (editing surface) ----- */
+
+/* Pages grow with their content. Dashed rules mark where each page's
+   height ends, so the user can see roughly where pages break. */
+.page.has-document {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--page-height) - 1px),
+    var(--page-boundary) calc(var(--page-height) - 1px),
+    var(--page-boundary) var(--page-height)
+  );
+}
+.page.has-document .page-margins {
+  position: static;
+  min-height: var(--page-height);
+  padding: var(--margin-top) var(--margin-right) var(--margin-bottom) var(--margin-left);
+  outline: none;
+  overflow: visible;
+}
+
+.doc-content {
+  min-height: calc(var(--page-height) - var(--margin-top) - var(--margin-bottom));
+  outline: 1px dashed var(--margin-guide);
+  outline-offset: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+  caret-color: #000;
+  cursor: text;
+}
+.doc-content:focus { outline-color: rgba(43, 87, 154, 0.45); }
+
+.para { margin: 0 0 8pt; min-height: 1.15em; }
+.para-heading-1 { font-size: 16pt; color: #2f5496; margin: 12pt 0 0; }
+.para-heading-2 { font-size: 13pt; color: #2f5496; margin: 2pt 0 0; }
+.para-heading-3 { font-size: 12pt; color: #1f3763; margin: 2pt 0 0; }
+.para-heading-4, .para-heading-5, .para-heading-6 { font-style: italic; color: #2f5496; margin: 2pt 0 0; }
+.para-title { font-size: 28pt; letter-spacing: -0.5pt; margin: 0; }
+.para-subtitle { font-size: 11pt; color: #5a5a5a; letter-spacing: 0.75pt; }
+.para-quote { font-style: italic; color: #404040; text-align: center; margin: 10pt 43pt; }
+.para-list { padding-left: 0.25in; position: relative; }
+.para-list::before { content: "•"; position: absolute; left: 0; }
+.para-list[data-level="1"] { padding-left: 0.5in; }
+.para-list[data-level="2"] { padding-left: 0.75in; }
+
+/* Objects inside paragraphs: shown, kept, not edited. */
+.obj { user-select: all; }
+.obj-image img { max-width: 100%; height: auto; vertical-align: bottom; }
+.obj-link { color: #0563c1; text-decoration: underline; cursor: default; }
+.obj-preserved { background: rgba(43, 87, 154, 0.08); border-bottom: 1px dotted rgba(43, 87, 154, 0.6); }
+.obj-page_break, .obj-column_break {
+  display: block;
+  text-align: center;
+  font: 0.75rem var(--ui-font);
+  color: var(--muted);
+  border-top: 1px dashed var(--muted);
+  margin: 4pt 0;
+  user-select: none;
+}
+.obj-hidden { display: inline; }
+
+/* Read-only blocks. */
+.table-wrap { margin: 0 0 8pt; overflow-x: auto; cursor: default; }
+.table-wrap table { border-collapse: collapse; width: 100%; }
+.table-wrap td { border: 1px solid #bfbfbf; padding: 2pt 5.4pt; vertical-align: top; }
+.table-wrap td .para { margin: 0; }
+.table-wrap td.merged-continue { border-top-color: transparent; }
+.preserved-block {
+  margin: 0 0 8pt;
+  padding: 2pt 4pt;
+  background: rgba(43, 87, 154, 0.06);
+  border-left: 3px solid rgba(43, 87, 154, 0.35);
+  cursor: default;
+}

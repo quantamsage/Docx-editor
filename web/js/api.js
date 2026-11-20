@@ -106,7 +106,7 @@ export async function getHealth(options) {
 
 /**
  * Document as returned by the server.
- * @typedef {{id: number, name: string, modified: boolean, model: object}} DocumentInfo
+ * @typedef {{id: number, name: string, modified: boolean, revision: number, model: object}} DocumentInfo
  */
 
 /** Creates a blank document. @returns {Promise<DocumentInfo>} */
@@ -151,4 +151,24 @@ export function downloadDocument(id, name, options = {}) {
 /** Closes a document on the server. */
 export async function closeDocument(id, options = {}) {
   await request(`/api/documents/${encodeURIComponent(id)}`, { ...options, method: "DELETE" });
+}
+
+/**
+ * Applies edits to a document atomically. `baseRevision` is the revision
+ * the edits' positions refer to; the server refuses edits based on an
+ * outdated revision (code "stale_revision").
+ * @returns {Promise<DocumentInfo>} The updated document.
+ */
+export function applyEdits(id, baseRevision, edits, options = {}) {
+  return request(`/api/documents/${encodeURIComponent(id)}/edits`, {
+    ...options,
+    method: "POST",
+    body: { base_revision: baseRevision, edits },
+    timeoutMs: DOCUMENT_TIMEOUT_MS,
+  });
+}
+
+/** URL of an image part of a document, for display. */
+export function mediaUrl(id, part) {
+  return `/api/documents/${encodeURIComponent(id)}/media/${part.split("/").map(encodeURIComponent).join("/")}`;
 }
