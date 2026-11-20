@@ -151,6 +151,20 @@ impl Document {
         &self.main_part
     }
 
+    /// The bytes of an image part the main document references as an image
+    /// (`word/media/…`), for display. Other parts are not returned.
+    pub fn image_part(&self, name: &str) -> Option<&[u8]> {
+        let referenced = self.rels.iter().any(|r| {
+            r.is_type(rel_type::IMAGE)
+                && !r.external
+                && resolve_target(&self.main_part, &r.target).is_some_and(|target| target.eq_ignore_ascii_case(name))
+        });
+        if !referenced {
+            return None;
+        }
+        self.package.part(name).map(|p| p.data.as_slice())
+    }
+
     /// Number of top-level blocks (paragraphs, tables and other content).
     pub fn block_count(&self) -> usize {
         block_positions(self.body(), &self.w.ns).len()

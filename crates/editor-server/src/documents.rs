@@ -4,6 +4,9 @@
 //! * `POST /api/documents/open?name=<file name>` — open the `.docx` bytes in
 //!   the request body (the browser reads the file the user picked).
 //! * `GET /api/documents/{id}` — the document's model.
+//! * `POST /api/documents/{id}/edits` — apply edits atomically (JSON
+//!   `{"base_revision": n, "edits": [...]}`) → the updated document.
+//! * `GET /api/documents/{id}/media/{part}` — an image the document shows.
 //! * `GET /api/documents/{id}/download?name=<file name>` — the saved `.docx`.
 //! * `DELETE /api/documents/{id}` — close the document.
 //!
@@ -21,7 +24,7 @@ use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use docx_engine::{Document, DocumentModel, DocxError};
+use docx_engine::{Document, DocumentModel, DocxError, Edit};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
@@ -32,6 +35,10 @@ pub const MAX_UPLOAD_BYTES: usize = 100 << 20;
 pub const MAX_OPEN_DOCUMENTS: usize = 32;
 /// Name given to new documents.
 pub const UNTITLED: &str = "Untitled document.docx";
+/// Largest edit request (pasting a long text is one request).
+pub const MAX_EDIT_BYTES: usize = 8 << 20;
+/// Most edits in one request.
+pub const MAX_EDITS: usize = 1000;
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const DOCM_MIME: &str = "application/vnd.ms-word.document.macroEnabled.12";
@@ -43,6 +50,10 @@ const DOTM_MIME: &str = "application/vnd.ms-word.template.macroEnabled.12";
 pub struct OpenDocument {
     pub name: String,
     pub document: Document,
+    /// Incremented by every applied edit batch. Edits address paragraphs
+    /// and inlines by position, so a client must say which revision its
+    /// positions refer to.
+    pub revision: u64,
 }
 
 /// All open documents.
@@ -92,6 +103,8 @@ pub fn routes() -> Router<AppState> {
         .route("/open", post(open).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)))
         .route("/{id}", get(fetch).delete(close))
         .route("/{id}/download", get(download))
+        .route("/{id}/edits", post(edit).layer(DefaultBodyLimit::max(MAX_EDIT_BYTES)))
+        .route("/{id}/media/{*part}", get(media))
 }
 
 /// A document as returned to the frontend.
@@ -100,11 +113,18 @@ pub struct DocumentResponse {
     pub id: u64,
     pub name: String,
     pub modified: bool,
+    pub revision: u64,
     pub model: DocumentModel,
 }
 
 fn respond(id: u64, doc: &OpenDocument) -> DocumentResponse {
-    DocumentResponse { id, name: doc.name.clone(), modified: doc.document.is_modified(), model: doc.document.model() }
+    DocumentResponse {
+        id,
+        name: doc.name.clone(),
+        modified: doc.document.is_modified(),
+        revision: doc.revision,
+        model: doc.document.model(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,7 +133,7 @@ pub struct NameQuery {
 }
 
 async fn create(State(state): State<AppState>) -> Result<(StatusCode, Json<DocumentResponse>), ApiError> {
-    let doc = OpenDocument { name: UNTITLED.to_string(), document: Document::new_blank() };
+    let doc = OpenDocument { name: UNTITLED.to_string(), document: Document::new_blank(), revision: 0 };
     let response = respond(0, &doc);
     let id = state.store().insert(doc)?;
     Ok((StatusCode::CREATED, Json(DocumentResponse { id, ..response })))
@@ -151,8 +171,8 @@ async fn open(
     .map_err(docx_error)?;
 
     tracing::info!(name = %name, blocks = model.blocks.len(), "document opened");
-    let id = state.store().insert(OpenDocument { name: name.clone(), document })?;
-    Ok((StatusCode::CREATED, Json(DocumentResponse { id, name, modified: false, model })))
+    let id = state.store().insert(OpenDocument { name: name.clone(), document, revision: 0 })?;
+    Ok((StatusCode::CREATED, Json(DocumentResponse { id, name, modified: false, revision: 0, model })))
 }
 
 async fn fetch(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Json<DocumentResponse>, ApiError> {
@@ -192,6 +212,84 @@ async fn download(
     if let Ok(value) = HeaderValue::from_str(&content_disposition(&name)) {
         headers.insert(header::CONTENT_DISPOSITION, value);
     }
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+/// Body of `POST /api/documents/{id}/edits`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditRequest {
+    /// The revision the edits' positions refer to.
+    base_revision: u64,
+    edits: Vec<Edit>,
+}
+
+async fn edit(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    body: Result<Json<EditRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<DocumentResponse>, ApiError> {
+    let Json(request) = body.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "edit_too_large", "The change is too large to apply at once.")
+        } else {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                format!("Invalid edit request: {}", rejection.body_text()),
+            )
+        }
+    })?;
+    if request.edits.len() > MAX_EDITS {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "Too many edits in one request."));
+    }
+    let entry = state.store().get(id)?;
+    let response = tokio::task::spawn_blocking(move || {
+        let mut doc = entry.lock().unwrap_or_else(|p| p.into_inner());
+        if doc.revision != request.base_revision {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "stale_revision",
+                "The document changed since this edit was made. Reload it and repeat the change.",
+            ));
+        }
+        if !request.edits.is_empty() {
+            doc.document.apply(&request.edits).map_err(docx_error)?;
+            doc.revision += 1;
+        }
+        Ok(respond(id, &doc))
+    })
+    .await
+    .map_err(|_| internal_error())??;
+    Ok(Json(response))
+}
+
+/// Image types the browser can display. SVG is excluded: served from this
+/// origin it could run script if opened directly.
+fn image_mime(part: &str) -> Option<&'static str> {
+    let ext = part.rsplit('.').next()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" | "jpe" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "webp" => "image/webp",
+        _ => return None,
+    })
+}
+
+async fn media(State(state): State<AppState>, Path((id, part)): Path<(u64, String)>) -> Result<Response, ApiError> {
+    let mime = image_mime(&part).ok_or_else(|| ApiError::not_found("This image type cannot be displayed."))?;
+    let entry = state.store().get(id)?;
+    let bytes = {
+        let doc = entry.lock().unwrap_or_else(|p| p.into_inner());
+        doc.document.image_part(&part).map(<[u8]>::to_vec)
+    }
+    .ok_or_else(|| ApiError::not_found("The document has no such image."))?;
+    let mut response = bytes.into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(response)
 }
@@ -310,6 +408,15 @@ mod tests {
             content_disposition("résumé 1.docx"),
             "attachment; filename=\"r_sum_ 1.docx\"; filename*=UTF-8''r%C3%A9sum%C3%A9%201.docx"
         );
+    }
+
+    #[test]
+    fn only_displayable_images_are_served() {
+        assert_eq!(image_mime("word/media/image1.PNG"), Some("image/png"));
+        assert_eq!(image_mime("word/media/photo.jpeg"), Some("image/jpeg"));
+        assert_eq!(image_mime("word/media/drawing.svg"), None);
+        assert_eq!(image_mime("word/media/chart.emf"), None);
+        assert_eq!(image_mime("word/document.xml"), None);
     }
 
     #[test]
