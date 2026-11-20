@@ -15,6 +15,7 @@
 
 mod blank;
 mod document;
+pub mod edit;
 pub mod error;
 pub mod model;
 pub mod opc;
@@ -24,6 +25,7 @@ mod read;
 pub mod xml;
 
 pub use document::Document;
+pub use edit::{Edit, InlineRef, Piece, Splice};
 pub use error::{DocxError, Result};
 pub use model::DocumentModel;
 pub use package::{Compression, Limits, Package, Part};

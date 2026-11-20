@@ -1,6 +1,7 @@
 //! An open document: the package, the parsed main part, and editing.
 
 use crate::blank::blank_package;
+use crate::edit::{Edit, InlineRef, Piece, Splice};
 use crate::error::{DocxError, Result};
 use crate::model::{Alignment, DocumentModel};
 use crate::opc::{
@@ -8,7 +9,7 @@ use crate::opc::{
 };
 use crate::package::{Limits, Package};
 use crate::props::{PPR_ORDER, WNames, ensure_child, ensure_ppr, remove_child};
-use crate::read::{ReadContext, W_NS, W_NS_STRICT, block_positions, read_document, read_styles};
+use crate::read::{ReadContext, W_NS, W_NS_STRICT, block_positions, is_inline, read_document, read_styles};
 use crate::xml::{Element, Node, XML_NS, XmlDocument};
 
 /// Run children that hold only plain text; runs made of these are replaced
@@ -295,6 +296,218 @@ impl Document {
         Ok(())
     }
 
+    /// Applies edits atomically: if any edit fails, the document is left
+    /// exactly as it was and the error is returned.
+    pub fn apply(&mut self, edits: &[Edit]) -> Result<()> {
+        let saved = (self.xml.clone(), self.modified);
+        for (i, edit) in edits.iter().enumerate() {
+            let result = match edit {
+                Edit::Splice(s) => self.splice(s),
+                Edit::InsertParagraph { at, text, style_id } => self.insert_paragraph(*at, text, style_id.as_deref()),
+                Edit::DeleteBlock { block } => self.delete_block(*block),
+                Edit::SetParagraphStyle { block, style_id } => self.set_paragraph_style(*block, style_id.as_deref()),
+                Edit::SetParagraphAlignment { block, alignment } => self.set_paragraph_alignment(*block, *alignment),
+            };
+            if let Err(e) = result {
+                (self.xml, self.modified) = saved;
+                return Err(match e {
+                    DocxError::InvalidEdit(msg) if edits.len() > 1 => {
+                        DocxError::InvalidEdit(format!("edit {} of {}: {msg}", i + 1, edits.len()))
+                    }
+                    other => other,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Replaces paragraphs `first..=last` with new content; see [`Splice`].
+    /// On error the document is unchanged.
+    pub fn splice(&mut self, splice: &Splice) -> Result<()> {
+        let w = self.w.clone();
+        let Splice { first, last, content } = splice;
+        let (first, last) = (*first, *last);
+        let positions = block_positions(self.body(), &w.ns);
+        if first > last || last >= positions.len() {
+            return Err(DocxError::InvalidEdit(format!(
+                "paragraphs {first}..{last} are not in the document ({} blocks)",
+                positions.len()
+            )));
+        }
+
+        // The paragraphs involved, and the virtual sequence of their content.
+        let body = self.body();
+        let mut paragraphs: Vec<&Element> = Vec::with_capacity(last - first + 1);
+        for (block, &position) in positions.iter().enumerate().take(last + 1).skip(first) {
+            match &body.children[position] {
+                Node::Element(el) if el.is(&w.ns, "p") => paragraphs.push(el),
+                _ => return Err(DocxError::InvalidEdit(format!("block {block} is not a paragraph"))),
+            }
+        }
+        for (offset, p) in paragraphs[..paragraphs.len() - 1].iter().enumerate() {
+            if section_properties(p, &w.ns).is_some() {
+                return Err(DocxError::InvalidEdit(format!(
+                    "paragraph {} ends a section; the edit would remove the section break",
+                    first + offset
+                )));
+            }
+        }
+
+        // (block, inline index or None for markers, node)
+        let mut sequence: Vec<(usize, Option<usize>, &Node)> = Vec::new();
+        let mut inline_counts = Vec::with_capacity(paragraphs.len());
+        for (offset, p) in paragraphs.iter().enumerate() {
+            let mut count = 0;
+            for node in &p.children {
+                match node {
+                    Node::Element(el) if el.is(&w.ns, "pPr") => {}
+                    Node::Element(el) if is_inline(el, &w.ns) => {
+                        sequence.push((first + offset, Some(count), node));
+                        count += 1;
+                    }
+                    other => sequence.push((first + offset, None, other)),
+                }
+            }
+            inline_counts.push(count);
+        }
+        let inline_at = |r: InlineRef| -> Result<&Element> {
+            if r.block < first || r.block > last || r.inline >= inline_counts[r.block - first] {
+                return Err(DocxError::InvalidEdit(format!(
+                    "inline {} of block {} is not part of the edited paragraphs",
+                    r.inline, r.block
+                )));
+            }
+            let node = sequence
+                .iter()
+                .find(|(b, i, _)| *b == r.block && *i == Some(r.inline))
+                .map(|(_, _, n)| *n)
+                .expect("counted above");
+            match node {
+                Node::Element(el) => Ok(el),
+                _ => unreachable!("inlines are elements"),
+            }
+        };
+
+        // Validate the pieces.
+        let mut kept: Vec<InlineRef> = Vec::new();
+        for piece in content {
+            match piece {
+                Piece::Keep { block, inline } => {
+                    let r = InlineRef { block: *block, inline: *inline };
+                    inline_at(r)?;
+                    if kept.last().is_some_and(|prev| *prev >= r) {
+                        return Err(DocxError::InvalidEdit(
+                            "kept content must be listed once, in document order".into(),
+                        ));
+                    }
+                    kept.push(r);
+                }
+                Piece::Text { text, like } => {
+                    validate_text(text)?;
+                    if let Some(r) = like
+                        && !inline_at(*r)?.is(&w.ns, "r")
+                    {
+                        return Err(DocxError::InvalidEdit(format!(
+                            "inline {} of block {} is not a run, so its formatting cannot be copied",
+                            r.inline, r.block
+                        )));
+                    }
+                }
+                Piece::Break => {}
+            }
+        }
+
+        // Build the new paragraphs' content by walking the sequence: kept
+        // inlines and markers stay in order; text and breaks are flushed at
+        // the first removed inline (where the edit happened) or before the
+        // next kept inline.
+        let mut outputs: Vec<Vec<Node>> = vec![Vec::new()];
+        let mut cursor = 0;
+        let flush_until = |end: usize, cursor: &mut usize, outputs: &mut Vec<Vec<Node>>| -> Result<()> {
+            while *cursor < end {
+                match &content[*cursor] {
+                    Piece::Text { text, like } if !text.is_empty() => {
+                        let rpr = match like {
+                            Some(r) => inline_at(*r)?.child(&w.ns, "rPr").cloned(),
+                            None => None,
+                        };
+                        outputs.last_mut().expect("never empty").push(Node::Element(build_run(&w, rpr, text)));
+                    }
+                    Piece::Break => outputs.push(Vec::new()),
+                    _ => {}
+                }
+                *cursor += 1;
+            }
+            Ok(())
+        };
+        let next_keep =
+            |from: usize| content[from..].iter().position(|p| matches!(p, Piece::Keep { .. })).map(|i| from + i);
+        for &(block, inline, node) in &sequence {
+            match inline {
+                None => outputs.last_mut().expect("never empty").push(node.clone()),
+                Some(i) => {
+                    let keep_at = content
+                        .iter()
+                        .position(|p| matches!(p, Piece::Keep { block: b, inline: n } if *b == block && *n == i));
+                    match keep_at {
+                        Some(at) => {
+                            flush_until(at, &mut cursor, &mut outputs)?;
+                            outputs.last_mut().expect("never empty").push(node.clone());
+                            cursor = at + 1;
+                        }
+                        None => {
+                            let end = next_keep(cursor).unwrap_or(content.len());
+                            flush_until(end, &mut cursor, &mut outputs)?;
+                        }
+                    }
+                }
+            }
+        }
+        flush_until(content.len(), &mut cursor, &mut outputs)?;
+
+        // Paragraph properties: the first paragraph's, without its section
+        // break; the section break of the last paragraph goes on the last
+        // new paragraph.
+        let first_p = paragraphs[0];
+        let mut base_ppr = first_p.child(&w.ns, "pPr").cloned();
+        let section = section_properties(paragraphs[paragraphs.len() - 1], &w.ns).cloned();
+        if let Some(ppr) = base_ppr.as_mut() {
+            remove_child(ppr, &w, "sectPr");
+        }
+        let count = outputs.len();
+        let mut new_paragraphs = Vec::with_capacity(count);
+        for (index, nodes) in outputs.into_iter().enumerate() {
+            let mut p = if index == 0 {
+                let mut p = first_p.clone();
+                p.children.clear();
+                p
+            } else {
+                w.element("p")
+            };
+            let mut ppr = base_ppr.clone();
+            if index == count - 1
+                && let Some(sect) = &section
+            {
+                let ppr = ppr.get_or_insert_with(|| w.element("pPr"));
+                *ensure_child(ppr, &w, PPR_ORDER, "sectPr") = sect.clone();
+            }
+            if let Some(ppr) = ppr.filter(|ppr| !ppr.children.is_empty() || index == 0) {
+                p.children.push(Node::Element(ppr));
+            }
+            p.children.extend(nodes);
+            new_paragraphs.push(Node::Element(p));
+        }
+
+        let body = self.body_mut();
+        for block in (first..=last).rev() {
+            body.children.remove(positions[block]);
+        }
+        let at = positions[first];
+        body.children.splice(at..at, new_paragraphs);
+        self.modified = true;
+        Ok(())
+    }
+
     // ----- Helpers -----
 
     fn body(&self) -> &Element {
@@ -327,6 +540,11 @@ impl Document {
             self.xml.root.set_attr(&declaration, None, &ns);
         }
     }
+}
+
+/// The section properties a paragraph carries (`w:pPr/w:sectPr`), if any.
+fn section_properties<'e>(p: &'e Element, w: &str) -> Option<&'e Element> {
+    p.child(w, "pPr").and_then(|ppr| ppr.child(w, "sectPr"))
 }
 
 fn parse_part(name: &str, data: &[u8]) -> Result<XmlDocument> {

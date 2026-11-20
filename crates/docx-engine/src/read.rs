@@ -42,6 +42,13 @@ const INLINE_MARKERS: [&str; 12] = [
     "customXmlInsRangeStart",
 ];
 
+/// Whether a paragraph child is an inline of the model (as opposed to the
+/// paragraph properties or a marker such as a bookmark). Edits address
+/// inlines by their position among these.
+pub(crate) fn is_inline(el: &Element, w: &str) -> bool {
+    !(el.namespace.as_deref() == Some(w) && (el.local_name() == "pPr" || INLINE_MARKERS.contains(&el.local_name())))
+}
+
 /// Names and context needed to interpret the main document part.
 pub struct ReadContext<'a> {
     pub w: &'a str,
@@ -147,9 +154,7 @@ fn read_paragraph(p: &Element, ctx: &ReadContext<'_>, stats: &mut Stats) -> Para
     }
     let mut text = String::new();
     for el in p.elements() {
-        if el.namespace.as_deref() == Some(ctx.w)
-            && (el.local_name() == "pPr" || INLINE_MARKERS.contains(&el.local_name()))
-        {
+        if !is_inline(el, ctx.w) {
             continue;
         }
         let inline = if el.is(ctx.w, "r") {

@@ -5,7 +5,7 @@
 //! interface can show that something is there. Such content is always kept
 //! in the document itself, whether or not it appears here.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The whole document as seen by the editor.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -82,7 +82,7 @@ impl Paragraph {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Alignment {
     Left,
