@@ -28,7 +28,7 @@ fn keep(block: usize, inline: usize) -> Piece {
 }
 
 fn t(text: &str, like: Option<(usize, usize)>) -> Piece {
-    Piece::Text { text: text.into(), like: like.map(|(block, inline)| InlineRef { block, inline }) }
+    Piece::Text { text: text.into(), like: like.map(|(block, inline)| InlineRef { block, inline }), format: None }
 }
 
 fn splice(doc: &mut Document, first: usize, last: usize, content: Vec<Piece>) -> docx_engine::Result<()> {

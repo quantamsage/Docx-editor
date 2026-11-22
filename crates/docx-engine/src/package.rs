@@ -172,6 +172,17 @@ impl Package {
                 .map_err(|e| DocxError::Write(format!("{}: {e}", part.name)))?;
             writer.write_all(data).map_err(|e| DocxError::Write(format!("{}: {e}", part.name)))?;
         }
+        // Replacements naming parts the package doesn't have are new parts.
+        for (name, data) in replacements {
+            let name = name.trim_start_matches('/');
+            if self.parts.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
+                continue;
+            }
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated).large_file(false);
+            writer.start_file(name, options).map_err(|e| DocxError::Write(format!("{name}: {e}")))?;
+            writer.write_all(data).map_err(|e| DocxError::Write(format!("{name}: {e}")))?;
+        }
         let cursor = writer.finish().map_err(|e| DocxError::Write(e.to_string()))?;
         Ok(cursor.into_inner())
     }

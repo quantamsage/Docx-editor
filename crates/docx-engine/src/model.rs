@@ -20,6 +20,8 @@ pub struct DocumentModel {
     pub stats: Stats,
     /// Non-fatal problems found while reading (e.g. a damaged styles part).
     pub warnings: Vec<String>,
+    /// List definitions from the numbering part, for drawing list markers.
+    pub lists: Vec<crate::numbering::ListDefinition>,
 }
 
 /// Counts shown to the user after opening a document.

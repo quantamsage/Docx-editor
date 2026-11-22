@@ -48,6 +48,50 @@ pub const PPR_ORDER: &[&str] = &[
     "pPrChange",
 ];
 
+/// Child order of `w:rPr` (CT_RPr: EG_RPrBase, then the change record).
+pub const RPR_ORDER: &[&str] = &[
+    "rStyle",
+    "rFonts",
+    "b",
+    "bCs",
+    "i",
+    "iCs",
+    "caps",
+    "smallCaps",
+    "strike",
+    "dstrike",
+    "outline",
+    "shadow",
+    "emboss",
+    "imprint",
+    "noProof",
+    "snapToGrid",
+    "vanish",
+    "webHidden",
+    "color",
+    "spacing",
+    "w",
+    "kern",
+    "position",
+    "sz",
+    "szCs",
+    "highlight",
+    "u",
+    "effect",
+    "bdr",
+    "shd",
+    "fitText",
+    "vertAlign",
+    "rtl",
+    "cs",
+    "em",
+    "lang",
+    "eastAsianLayout",
+    "specVanish",
+    "oMath",
+    "rPrChange",
+];
+
 /// Names used to create elements in the document's WordprocessingML
 /// namespace with the prefix it already declares.
 ///
@@ -107,6 +151,28 @@ pub fn ensure_child<'a>(parent: &'a mut Element, w: &WNames, order: &[&str], loc
         Node::Element(e) => e,
         _ => unreachable!("index points at an element"),
     }
+}
+
+/// Puts the known children of `parent` into schema order (stable). Unknown
+/// elements and other nodes stay directly after the known element they
+/// followed, so extensions keep their place relative to their neighbours.
+pub fn sort_schema(parent: &mut Element, w: &WNames, order: &[&str]) {
+    let mut current = 0usize;
+    let mut keyed: Vec<(usize, usize, Node)> = std::mem::take(&mut parent.children)
+        .into_iter()
+        .enumerate()
+        .map(|(i, node)| {
+            if let Node::Element(e) = &node
+                && e.namespace.as_deref() == Some(w.ns.as_str())
+                && let Some(r) = rank(order, e.local_name())
+            {
+                current = r;
+            }
+            (current, i, node)
+        })
+        .collect();
+    keyed.sort_by_key(|(r, i, _)| (*r, *i));
+    parent.children = keyed.into_iter().map(|(_, _, n)| n).collect();
 }
 
 /// Removes every `local` child of `parent`; returns whether any existed.

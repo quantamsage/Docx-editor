@@ -1,11 +1,16 @@
 //! An open document: the package, the parsed main part, and editing.
 
-use crate::blank::blank_package;
+use std::collections::BTreeMap;
+
+use crate::blank::{BLANK_STYLES, blank_package};
 use crate::edit::{Edit, InlineRef, Piece, Splice};
 use crate::error::{DocxError, Result};
+use crate::format::{ListKind, ParagraphFormat, apply_paragraph_format, apply_run_format};
 use crate::model::{Alignment, DocumentModel};
+use crate::numbering::{self, ListDefinition, NUMBERING_CONTENT_TYPE, NUMBERING_REL_TYPE};
 use crate::opc::{
-    ContentTypes, MAIN_CONTENT_TYPES, Relationship, parse_relationships, rel_type, rels_part_for, resolve_target,
+    CONTENT_TYPES_NS, ContentTypes, MAIN_CONTENT_TYPES, PACKAGE_RELS_NS, Relationship, parse_relationships, rel_type,
+    rels_part_for, resolve_target,
 };
 use crate::package::{Limits, Package};
 use crate::props::{PPR_ORDER, WNames, ensure_child, ensure_ppr, remove_child};
@@ -30,6 +35,10 @@ pub struct Document {
     rels: Vec<Relationship>,
     styles: Vec<crate::model::Style>,
     warnings: Vec<String>,
+    /// Secondary parts changed by edits (styles, numbering, relationships,
+    /// content types), parsed on first change. Written on save in place of
+    /// the originals; names not in the package are new parts.
+    edited: BTreeMap<String, XmlDocument>,
 }
 
 impl Document {
@@ -114,7 +123,7 @@ impl Document {
             })
             .unwrap_or_default();
 
-        Ok(Self { package, main_part, xml, modified: false, w, rels, styles, warnings })
+        Ok(Self { package, main_part, xml, modified: false, w, rels, styles, warnings, edited: BTreeMap::new() })
     }
 
     /// The typed read model of the document.
@@ -123,22 +132,50 @@ impl Document {
         let mut model = read_document(&self.xml, &ctx);
         model.styles = self.styles.clone();
         model.warnings = self.warnings.clone();
+        model.lists = self.lists();
         model
+    }
+
+    /// The document's list definitions (empty if it has no numbering part).
+    fn lists(&self) -> Vec<ListDefinition> {
+        let Some(name) = self.related_part(rel_type::NUMBERING) else { return Vec::new() };
+        if let Some(doc) = self.edited.get(&name) {
+            return numbering::read(doc, &self.w.ns);
+        }
+        self.package
+            .part(&name)
+            .and_then(|part| XmlDocument::parse(&part.data).ok())
+            .map(|doc| numbering::read(&doc, &self.w.ns))
+            .unwrap_or_default()
+    }
+
+    /// The part the main document relates to with the given type, if any.
+    fn related_part(&self, kind: &str) -> Option<String> {
+        self.rels
+            .iter()
+            .find(|r| r.is_type(kind) && !r.external)
+            .and_then(|r| resolve_target(&self.main_part, &r.target))
     }
 
     /// Serializes the document. If nothing was edited, every part is written
     /// back exactly as read.
     pub fn save(&self) -> Result<Vec<u8>> {
-        if !self.modified {
+        if !self.is_modified() {
             return self.package.write();
         }
-        let main = self.xml.to_bytes();
-        self.package.write_with(&[(self.main_part.as_str(), main.as_slice())])
+        let main = self.modified.then(|| self.xml.to_bytes());
+        let others: Vec<(&str, Vec<u8>)> =
+            self.edited.iter().map(|(name, doc)| (name.as_str(), doc.to_bytes())).collect();
+        let mut replacements: Vec<(&str, &[u8])> = others.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+        if let Some(main) = &main {
+            replacements.push((self.main_part.as_str(), main.as_slice()));
+        }
+        self.package.write_with(&replacements)
     }
 
     /// Whether the document has unsaved edits since it was opened.
     pub fn is_modified(&self) -> bool {
-        self.modified
+        self.modified || !self.edited.is_empty()
     }
 
     /// The underlying package (all parts as read).
@@ -313,17 +350,18 @@ impl Document {
     /// Applies edits atomically: if any edit fails, the document is left
     /// exactly as it was and the error is returned.
     pub fn apply(&mut self, edits: &[Edit]) -> Result<()> {
-        let saved = (self.xml.clone(), self.modified);
+        let saved = (self.xml.clone(), self.modified, self.edited.clone(), self.rels.clone(), self.styles.clone());
         for (i, edit) in edits.iter().enumerate() {
             let result = match edit {
                 Edit::Splice(s) => self.splice(s),
+                Edit::FormatParagraphs { first, last, format } => self.format_paragraphs(*first, *last, format),
                 Edit::InsertParagraph { at, text, style_id } => self.insert_paragraph(*at, text, style_id.as_deref()),
                 Edit::DeleteBlock { block } => self.delete_block(*block),
                 Edit::SetParagraphStyle { block, style_id } => self.set_paragraph_style(*block, style_id.as_deref()),
                 Edit::SetParagraphAlignment { block, alignment } => self.set_paragraph_alignment(*block, *alignment),
             };
             if let Err(e) = result {
-                (self.xml, self.modified) = saved;
+                (self.xml, self.modified, self.edited, self.rels, self.styles) = saved;
                 return Err(match e {
                     DocxError::InvalidEdit(msg) if edits.len() > 1 => {
                         DocxError::InvalidEdit(format!("edit {} of {}: {msg}", i + 1, edits.len()))
@@ -416,8 +454,11 @@ impl Document {
                     }
                     kept.push(r);
                 }
-                Piece::Text { text, like } => {
+                Piece::Text { text, like, format } => {
                     validate_text(text)?;
+                    if let Some(f) = format {
+                        f.validate()?;
+                    }
                     if let Some(r) = like
                         && !inline_at(*r)?.is(&w.ns, "r")
                     {
@@ -440,11 +481,14 @@ impl Document {
         let flush_until = |end: usize, cursor: &mut usize, outputs: &mut Vec<Vec<Node>>| -> Result<()> {
             while *cursor < end {
                 match &content[*cursor] {
-                    Piece::Text { text, like } if !text.is_empty() => {
-                        let rpr = match like {
+                    Piece::Text { text, like, format } if !text.is_empty() => {
+                        let mut rpr = match like {
                             Some(r) => inline_at(*r)?.child(&w.ns, "rPr").cloned(),
                             None => None,
                         };
+                        if let Some(f) = format {
+                            rpr = apply_run_format(rpr, &w, f);
+                        }
                         outputs.last_mut().expect("never empty").push(Node::Element(build_run(&w, rpr, text)));
                     }
                     Piece::Break => outputs.push(Vec::new()),
@@ -522,6 +566,146 @@ impl Document {
         Ok(())
     }
 
+    /// Applies a paragraph format (style, alignment, indentation, spacing,
+    /// list) to paragraphs `first..=last`. Styles the document doesn't
+    /// define are added from the built-in set (Title, Heading 1–3, …); list
+    /// definitions are reused or added to the numbering part, which is
+    /// created if the document has none.
+    pub fn format_paragraphs(&mut self, first: usize, last: usize, format: &ParagraphFormat) -> Result<()> {
+        format.validate()?;
+        let positions = block_positions(self.body(), &self.w.ns);
+        if first > last || last >= positions.len() {
+            return Err(DocxError::InvalidEdit(format!("paragraphs {first}..{last} are not in the document")));
+        }
+        for (block, &position) in positions.iter().enumerate().take(last + 1).skip(first) {
+            match &self.body().children[position] {
+                Node::Element(el) if el.is(&self.w.ns, "p") => {}
+                _ => return Err(DocxError::InvalidEdit(format!("block {block} is not a paragraph"))),
+            }
+        }
+        if let Some(Some(style)) = &format.style_id {
+            validate_style_id(style)?;
+            self.ensure_style(style)?;
+        }
+        let num_id = match &format.list {
+            Some(Some(list)) => Some(self.list_num_id(list.kind)?),
+            _ => None,
+        };
+        let w = self.w.clone();
+        for block in first..=last {
+            let p = self.paragraph_mut(block)?;
+            apply_paragraph_format(p, &w, format, num_id.as_deref());
+        }
+        self.modified = true;
+        Ok(())
+    }
+
+    /// Makes sure paragraph style `id` exists, adding a built-in definition
+    /// if needed.
+    fn ensure_style(&mut self, id: &str) -> Result<()> {
+        if self.styles.iter().any(|s| s.id == id) {
+            return Ok(());
+        }
+        let builtin =
+            builtin_style(id).ok_or_else(|| DocxError::InvalidEdit(format!("the document has no style named {id}")))?;
+        let Some(name) = self.related_part(rel_type::STYLES) else {
+            // No style sheet: Word shows the paragraph in the default style.
+            return Ok(());
+        };
+        let ns = self.w.ns.clone();
+        let doc = self.edited_xml(&name)?;
+        if doc.prefix_for(&ns).as_deref() != Some("w") {
+            return Ok(()); // unusual prefix: keep the style sheet untouched
+        }
+        let style_model = crate::model::Style {
+            id: id.to_string(),
+            name: builtin.attr(Some(&ns), "styleId").map(|_| builtin_name(&builtin, &ns)).unwrap_or_default(),
+            kind: "paragraph".into(),
+            based_on: builtin.child(&ns, "basedOn").and_then(|b| b.attr(Some(&ns), "val")),
+            is_default: false,
+        };
+        doc.root.children.push(Node::Element(builtin));
+        self.styles.push(style_model);
+        Ok(())
+    }
+
+    /// The numId of a bullet or numbered list, creating the definition (and
+    /// the numbering part) if necessary.
+    fn list_num_id(&mut self, kind: ListKind) -> Result<String> {
+        let name = match self.related_part(rel_type::NUMBERING) {
+            Some(name) => name,
+            None => self.create_numbering_part()?,
+        };
+        let ns = self.w.ns.clone();
+        let doc = self.edited_xml(&name)?;
+        let prefix = doc.prefix_for(&ns).unwrap_or_default();
+        Ok(numbering::find_or_create(doc, &ns, &prefix, kind))
+    }
+
+    /// Adds `word/numbering.xml` with its relationship and content type.
+    fn create_numbering_part(&mut self) -> Result<String> {
+        let dir = self.main_part.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+        let mut file = "numbering.xml".to_string();
+        let mut n = 1;
+        let join = |dir: &str, file: &str| if dir.is_empty() { file.to_string() } else { format!("{dir}/{file}") };
+        while self.package.part(&join(&dir, &file)).is_some() || self.edited.contains_key(&join(&dir, &file)) {
+            n += 1;
+            file = format!("numbering{n}.xml");
+        }
+        let name = join(&dir, &file);
+        let doc = XmlDocument::parse(&numbering::empty_part(&self.w.ns))
+            .map_err(|e| DocxError::Write(format!("numbering template: {}", e.0)))?;
+        self.edited.insert(name.clone(), doc);
+
+        // Relationship from the main part.
+        let rels_name = rels_part_for(&self.main_part);
+        if self.package.part(&rels_name).is_none() && !self.edited.contains_key(&rels_name) {
+            let empty = format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{PACKAGE_RELS_NS}"></Relationships>"#
+            );
+            let doc = XmlDocument::parse(empty.as_bytes()).map_err(|e| DocxError::Write(e.0))?;
+            self.edited.insert(rels_name.clone(), doc);
+        }
+        let mut next = self.rels.len() + 1;
+        let id = loop {
+            let candidate = format!("rId{next}");
+            if !self.rels.iter().any(|r| r.id == candidate) {
+                break candidate;
+            }
+            next += 1;
+        };
+        let rels = self.edited_xml(&rels_name)?;
+        let prefix = rels.prefix_for(PACKAGE_RELS_NS).unwrap_or_default();
+        let mut rel = Element::new(&prefix, "Relationship", Some(PACKAGE_RELS_NS));
+        rel.set_attr("Id", None, &id);
+        rel.set_attr("Type", None, NUMBERING_REL_TYPE);
+        rel.set_attr("Target", None, &file);
+        rels.root.children.push(Node::Element(rel));
+        self.rels.push(Relationship { id, rel_type: NUMBERING_REL_TYPE.into(), target: file, external: false });
+
+        // Content type override.
+        let types = self.edited_xml("[Content_Types].xml")?;
+        let prefix = types.prefix_for(CONTENT_TYPES_NS).unwrap_or_default();
+        let mut over = Element::new(&prefix, "Override", Some(CONTENT_TYPES_NS));
+        over.set_attr("PartName", None, &format!("/{name}"));
+        over.set_attr("ContentType", None, NUMBERING_CONTENT_TYPE);
+        types.root.children.push(Node::Element(over));
+        Ok(name)
+    }
+
+    /// A secondary part's XML for editing (parsed from the package once).
+    fn edited_xml(&mut self, name: &str) -> Result<&mut XmlDocument> {
+        if !self.edited.contains_key(name) {
+            let part = self
+                .package
+                .part(name)
+                .ok_or_else(|| DocxError::InvalidEdit(format!("the document has no part {name}")))?;
+            let doc = parse_part(name, &part.data)?;
+            self.edited.insert(name.to_string(), doc);
+        }
+        Ok(self.edited.get_mut(name).expect("inserted above"))
+    }
+
     // ----- Helpers -----
 
     fn body(&self) -> &Element {
@@ -554,6 +738,18 @@ impl Document {
             self.xml.root.set_attr(&declaration, None, &ns);
         }
     }
+}
+
+/// Paragraph styles the editor can add to documents that lack them,
+/// taken from the blank document's style sheet.
+fn builtin_style(id: &str) -> Option<Element> {
+    let sheet = XmlDocument::parse(BLANK_STYLES.as_bytes()).ok()?;
+    let w = W_NS;
+    sheet.root.elements().find(|e| e.is(w, "style") && e.attr(Some(w), "styleId").as_deref() == Some(id)).cloned()
+}
+
+fn builtin_name(style: &Element, w: &str) -> String {
+    style.child(w, "name").and_then(|n| n.attr(Some(w), "val")).unwrap_or_default()
 }
 
 /// The section properties a paragraph carries (`w:pPr/w:sectPr`), if any.

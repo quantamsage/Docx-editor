@@ -10,6 +10,7 @@
 
 use serde::Deserialize;
 
+use crate::format::{ParagraphFormat, RunFormat};
 use crate::model::Alignment;
 
 /// Identifies an inline of the current model: `blocks[block].inlines[inline]`.
@@ -31,6 +32,9 @@ pub enum Piece {
         text: String,
         #[serde(default)]
         like: Option<InlineRef>,
+        /// Formatting changes applied on top of `like`'s formatting.
+        #[serde(default)]
+        format: Option<RunFormat>,
     },
     /// Ends the current paragraph and starts a new one.
     Break,
@@ -77,5 +81,11 @@ pub enum Edit {
     SetParagraphAlignment {
         block: usize,
         alignment: Option<Alignment>,
+    },
+    /// Changes the formatting of paragraphs `first..=last`.
+    FormatParagraphs {
+        first: usize,
+        last: usize,
+        format: ParagraphFormat,
     },
 }

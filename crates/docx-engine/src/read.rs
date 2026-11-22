@@ -121,7 +121,16 @@ pub fn read_document(doc: &XmlDocument, ctx: &ReadContext<'_>) -> DocumentModel 
     headers.sort();
     footers.sort();
 
-    DocumentModel { blocks, section, styles: Vec::new(), headers, footers, stats, warnings: Vec::new() }
+    DocumentModel {
+        blocks,
+        section,
+        styles: Vec::new(),
+        headers,
+        footers,
+        stats,
+        warnings: Vec::new(),
+        lists: Vec::new(),
+    }
 }
 
 fn read_blocks(container: &Element, ctx: &ReadContext<'_>, stats: &mut Stats) -> Vec<Block> {
