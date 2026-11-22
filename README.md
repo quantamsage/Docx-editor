@@ -2,7 +2,7 @@
 
 A local, web-based editor for Microsoft Word `.docx` documents. A Rust (Axum/Tokio) server runs on your computer and serves a Word-style interface built with plain HTML, CSS and JavaScript. Nothing is sent over the internet.
 
-> **Status: Phase 3 (editing).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop), edit their text and paragraphs on a page with the document's real size and margins, and save them again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing content or formatting you didn't touch. Formatting controls, table editing, undo and find & replace come in later phases and stay disabled until then.
+> **Status: Phase 4 (formatting).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop), edit and format their text and paragraphs on a page with the document's real size and margins, and save them again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing content or formatting you didn't touch. Table editing, images, headers and footers, undo and find & replace come in later phases.
 
 ## Requirements
 
@@ -45,6 +45,23 @@ What is preserved: everything. Parts of the file that were not edited are writte
 - Images, hyperlinks, page breaks and preserved content are shown as protected objects: you can type around them and delete images or links, but not edit inside them yet. Fields (such as page numbers) and comment markers are always kept. Tables and content controls are shown read-only.
 - Changes are applied to the document in the editor as you type. The title bar shows "Unsaved changes" until you save, and closing the tab asks first.
 
+## Formatting
+
+The formatting toolbar shows the formatting at the cursor and applies changes to the selection (or, for character formatting with nothing selected, to the word at the cursor):
+
+| Control | Shortcut |
+| --- | --- |
+| Paragraph style (Normal, Title, Heading 1–3 and the document's own styles) | `Ctrl+Alt+1/2/3` headings, `Ctrl+Alt+0` Normal |
+| Font and size | `Ctrl+]` / `Ctrl+[` larger / smaller |
+| Bold, italic, underline, strikethrough | `Ctrl+B`, `Ctrl+I`, `Ctrl+U`, `Ctrl+Shift+X` |
+| Text colour and highlight colour | |
+| Align left, centre, right, justify | `Ctrl+Shift+L/E/R/J` |
+| Bulleted and numbered lists | `Ctrl+Shift+8`, `Ctrl+Shift+7` |
+| Decrease / increase indent (changes the list level in lists) | `Ctrl+Shift+M`, `Ctrl+M` |
+| Line spacing and paragraph spacing | |
+
+Heading and title styles a document doesn't define are added to it with Word's standard look. Lists reuse the document's own bullet or numbered list where it has one; a document without lists gets a numbering definition added. Formatting is written as ordinary Word properties, so Word shows it the same way.
+
 ## Tests
 
 ```sh
@@ -54,7 +71,7 @@ cargo fmt --check              # formatting
 npm test                       # frontend unit tests (Node's built-in test runner; nothing to install)
 
 cargo build --release
-npm run test:browser           # drives the real interface in headless Edge/Chrome (types, presses Enter/Backspace/Delete, edits a Word file)
+npm run test:browser           # drives the real interface in headless Edge/Chrome (typing, Enter/Backspace/Delete, formatting, editing a Word file)
 ```
 
 Word compatibility checks (Windows with Microsoft Word installed):

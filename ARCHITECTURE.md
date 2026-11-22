@@ -23,11 +23,14 @@ crates/docx-engine/
   src/model.rs                 serializable read model (blocks, runs, tables, section, styles)
   src/props.rs                 schema-ordered property insertion (w:pPr)
   src/edit.rs                  editing operations (Splice, Piece, Edit) sent by the editor
+  src/format.rs                run and paragraph formats, applied in schema order
+  src/numbering.rs             list definitions: reading, reusing and creating them
   src/document.rs              Document: open, model, edit (splice, apply), save
   src/blank.rs                 template for new documents
   tests/engine.rs              synthetic "hard cases" document: parsing, preservation, edits, errors
   tests/word_fixture.rs        tests against a document written by Microsoft Word
   tests/splice.rs              typing, Enter, joining, cross-paragraph deletes, paste, sections, atomicity
+  tests/formatting.rs          run and paragraph formats, styles added on demand, lists
   examples/docx_tool.rs        inspect/edit files from the command line
 crates/editor-server/
   src/main.rs                  CLI entry: parse args → bind 127.0.0.1:<port> → open browser → serve
@@ -48,7 +51,8 @@ web/
   js/editor/content.js         model ⇄ editable segments ⇄ splice pieces (no DOM; unit-tested)
   js/editor/render.js          model → editable page (paragraphs, runs, objects, read-only tables)
   js/editor/dom.js             reading the page: segments, caret offsets, selection
-  js/editor/editor.js          input handling, background sync, structural edits, recovery
+  js/editor/editor.js          input handling, background sync, structural and formatting edits, recovery
+  js/editor/toolbar.js         formatting toolbar: state from the selection, commands, shortcuts
 tests/frontend/                Node test-runner tests for web/js modules
 tests/browser/smoke.mjs        headless-browser test of the real interface
 tests/fixtures/word-sample.docx  document produced by Microsoft Word (see scripts/)
@@ -120,9 +124,26 @@ The editor renders paragraphs as `<p data-block>`, text runs as `<span data-kind
 ### Limitations (Phase 3)
 
 - Pages are one continuous sheet with dashed lines at each page height; real pagination (where Word would break pages) comes with page layout (Phase 5). The page count in the status bar is estimated from the height.
-- Tables, content controls and text inside hyperlinks are shown but not editable yet; list numbering is shown as a bullet.
+- Tables, content controls and text inside hyperlinks are shown but not editable yet.
+- Formatting with nothing selected applies to the word at the cursor; there's no "type in bold from here" mode yet.
+- The toolbar shows formatting set directly on the text; formatting that comes only from the paragraph's style (for example a heading's size) shows as the style default ("(Style font)", "–").
+- Lists restart only where Word's numbering would; there is no "restart numbering" or "continue list" command, and list numbering inside tables isn't drawn.
 - Each sync returns the whole document model, which is fine for typical documents but grows with very large ones.
 - Floating images are shown inline.
+
+## Formatting
+
+**Character formatting** travels with splices: a `text` piece may carry a `format` (`bold`, `italic`, `underline`, `strike`, `font`, `size` in half-points, `color`, `highlight`). The engine copies the `like` run's `w:rPr` and applies only the named changes (`null` removes a property so the style applies; `false` writes an explicit off, e.g. `<w:b w:val="0"/>`, which can switch off a style's bold). Theme font and colour attributes are removed when an explicit font or colour is set, since they would override it. The changed `w:rPr` is put in the `CT_RPr` schema order; unknown children (language, kerning, extensions) are kept next to the property they followed. The frontend builds these splices with `content.formatRange`: text outside the selection keeps its runs (whole runs are kept untouched), selected text is rewritten with its own formatting plus the change, objects are kept.
+
+**Paragraph formatting** is the `format_paragraphs` edit (`style_id`, `alignment`, `indent`, `spacing`, `list`), applied to every paragraph in a range by setting the corresponding `w:pPr` children in schema order. Absent fields are unchanged; `null` removes the property.
+
+- **Styles:** applying a style the document doesn't define is allowed for the built-in set (Title, Heading 1–3, List Paragraph, …): the definition from the blank template is appended to `styles.xml` (only when it uses the usual `w:` prefix). Other unknown styles are refused.
+- **Lists:** `numbering.find_or_create` reuses the first `w:num` whose level 0 is a bullet (or decimal), or appends a 9-level `w:abstractNum` (keeping all abstractNums before the first `w:num`, as the schema requires) and a `w:num`. A document without a numbering part gets `word/numbering.xml`, a relationship and a content-type override.
+- Secondary parts changed this way (`styles.xml`, `numbering.xml`, relationships, `[Content_Types].xml`) are kept as parsed trees in `Document.edited`, written on save (new parts appended to the archive), and rolled back with the main part when a batch fails. All other parts stay byte-identical.
+
+**Display:** the model includes `lists` (each `w:num` with its levels' format, text, start and indent). `content.listMarkers` numbers list paragraphs per list and level (restarting deeper levels, formatting `%1.%2.` with each level's numbering format, letters and roman numerals) and maps Word's symbol-font bullets (e.g. U+F0B7) to Unicode. The marker hangs in the paragraph's indent.
+
+**Toolbar:** `toolbar.js` reads the formatting at the selection (`editor.currentFormat()`: the run before the cursor, the paragraph, its list kind) on every selection change and sets button states and menus. Buttons act on mousedown without taking focus, so the selection is kept; after an edit the page is re-rendered and the selection restored. Shortcuts follow common editor conventions (some Word shortcuts such as `Ctrl+L` are reserved by browsers).
 
 ## Safety when opening files
 
