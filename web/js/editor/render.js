@@ -8,7 +8,7 @@
 // the CSSOM (element.style), which the Content-Security-Policy allows.
 
 import { twipsToPx } from "../documents.js";
-import { paragraphSegments } from "./content.js";
+import { listMarkers, paragraphSegments } from "./content.js";
 
 const HIGHLIGHTS = {
   yellow: "#ffff00",
@@ -166,12 +166,18 @@ export function renderParagraph(paragraph, index, ctx, editable = true) {
   }
   const cls = styleClass(paragraph.style_id, ctx.styles);
   if (cls) el.classList.add(cls);
+  if (!editable) el.contentEditable = "false";
+  applyParagraphStyle(el, paragraph);
   if (paragraph.numbering) {
     el.classList.add("para-list");
     el.dataset.level = String(paragraph.numbering.level);
+    const marker = index !== null && ctx.markers ? ctx.markers[index] : null;
+    if (marker) el.dataset.marker = marker;
+    // Lists are indented by their level's definition unless the paragraph sets its own indent.
+    const def = (ctx.lists || []).find((d) => d.num_id === paragraph.numbering.num_id);
+    const level = def && def.levels[paragraph.numbering.level];
+    if (level && level.indent_left && !(paragraph.indent && paragraph.indent.left)) el.style.marginLeft = `${twipsToPx(level.indent_left)}px`;
   }
-  if (!editable) el.contentEditable = "false";
-  applyParagraphStyle(el, paragraph);
   renderInlines(el, paragraph, ctx);
   return el;
 }
@@ -226,7 +232,7 @@ function renderPreserved(block, index) {
 
 /** Renders all blocks of the model into `root`. */
 export function renderBlocks(root, model, ctx) {
-  const context = { ...ctx, styles: model.styles };
+  const context = { ...ctx, styles: model.styles, lists: model.lists || [], markers: listMarkers(model) };
   const nodes = (model.blocks || []).map((block, index) => {
     if (block.type === "paragraph") return renderParagraph(block, index, context);
     if (block.type === "table") return renderTable(block, index, context);

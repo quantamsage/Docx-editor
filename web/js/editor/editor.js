@@ -15,8 +15,20 @@
 //   reloaded from the server and the user is told.
 
 import { ApiError, applyEdits, getDocument, mediaUrl } from "../api.js";
-import { LINE_BREAK, isNoop, normalizeSegments, remapAfterSplice, replaceRange, segmentsToPieces } from "./content.js";
-import { insertTextAtSelection, paragraphLength, parseParagraph, selectionInfo, setCaret } from "./dom.js";
+import {
+  LINE_BREAK,
+  formatAt,
+  formatRange,
+  isNoop,
+  listKind,
+  normalizeSegments,
+  remapAfterSplice,
+  replaceRange,
+  segmentsLength,
+  segmentsToPieces,
+  wordAt,
+} from "./content.js";
+import { insertTextAtSelection, paragraphLength, parseParagraph, selectionInfo, setCaret, setSelection } from "./dom.js";
 import { renderBlocks } from "./render.js";
 
 /** How long typing must pause before the change is sent. */
@@ -30,8 +42,9 @@ const BLOCKED_INPUT = new Set(["historyUndo", "historyRedo", "insertFromDrop", "
  * @param {(doc: {id: number, revision: number, model: object}) => void} hooks.onChange  After every applied edit.
  * @param {(message: string) => void} hooks.onError  When an edit could not be applied.
  * @param {(message: string) => void} [hooks.onInfo]  Short informational messages.
+ * @param {(name: string) => void} [hooks.onCommand]  A formatting command the browser raised (e.g. "bold").
  */
-export function createEditor(root, { onChange, onError, onInfo = () => {} }) {
+export function createEditor(root, { onChange, onError, onInfo = () => {}, onCommand = () => {} }) {
   /** @type {{id: number, revision: number, model: object}|null} */
   let doc = null;
   const dirty = new Set();
@@ -148,28 +161,30 @@ export function createEditor(root, { onChange, onError, onInfo = () => {} }) {
     el.scrollIntoView({ block: "nearest" });
   }
 
-  /** Replaces the range from `start` to `end` with `text` (see content.replaceRange). */
-  function replace(start, end, text) {
+  /** Current segments of paragraph `block` (from the page). */
+  function segmentsOf(block) {
+    const paragraph = doc.model.blocks[block];
+    return { block, paragraph, segments: normalizeSegments(paragraph, parseParagraph(blockEl(block))) };
+  }
+
+  /**
+   * Runs an edit that changes structure or formatting: pending typing is
+   * sent first, then `plan()` builds `{edits, after}` from the current
+   * page (or returns null to do nothing), the edits are applied, the page
+   * is re-rendered and `after()` restores the caret or selection.
+   */
+  function runEdit(plan) {
     if (!doc) return Promise.resolve();
     structuralPending = true;
     const task = enqueue(async () => {
       await doSync();
-      for (let b = start.block; b <= end.block; b++) {
-        if (doc.model.blocks[b]?.type !== "paragraph") {
-          onInfo("Selections that include tables or protected content can't be changed yet.");
-          return;
-        }
-      }
-      const info = (pos) => {
-        const paragraph = doc.model.blocks[pos.block];
-        return { block: pos.block, paragraph, segments: normalizeSegments(paragraph, parseParagraph(blockEl(pos.block))), offset: pos.offset };
-      };
-      const { splice, caret } = replaceRange(info(start), info(end), text);
-      const result = await applyEdits(doc.id, doc.revision, [{ op: "splice", ...splice }]);
+      const built = plan();
+      if (!built || !built.edits.length) return;
+      const result = await applyEdits(doc.id, doc.revision, built.edits);
       doc.revision = result.revision;
       doc.model = result.model;
       render();
-      placeCaret(caret.block, caret.offset);
+      if (built.after) built.after();
       onChange(doc);
     });
     return task
@@ -181,6 +196,118 @@ export function createEditor(root, { onChange, onError, onInfo = () => {} }) {
         structuralPending = false;
         drainReplayQueue();
       });
+  }
+
+  /** Replaces the range from `start` to `end` with `text` (see content.replaceRange). */
+  function replace(start, end, text) {
+    return runEdit(() => {
+      for (let b = start.block; b <= end.block; b++) {
+        if (doc.model.blocks[b]?.type !== "paragraph") {
+          onInfo("Selections that include tables or protected content can't be changed yet.");
+          return null;
+        }
+      }
+      const { splice, caret } = replaceRange({ ...segmentsOf(start.block), offset: start.offset }, { ...segmentsOf(end.block), offset: end.offset }, text);
+      return { edits: [{ op: "splice", ...splice }], after: () => placeCaret(caret.block, caret.offset) };
+    });
+  }
+
+  /** The selection, or null (with a message) when it can't be formatted. */
+  function editableSelection() {
+    const sel = selectionInfo(root);
+    if (!sel) {
+      onInfo("Place the cursor in the document first.");
+      return null;
+    }
+    if (!sel.start.editable || !sel.end.editable) {
+      onInfo("Tables and protected content can't be formatted yet.");
+      return null;
+    }
+    return sel;
+  }
+
+  /**
+   * Applies a character format (e.g. {bold: true}) to the selection, or to
+   * the word at the cursor when nothing is selected.
+   */
+  function formatText(format) {
+    const sel = editableSelection();
+    if (!sel) return Promise.resolve();
+    return runEdit(() => {
+      let start = { block: sel.start.block, offset: sel.start.offset };
+      let end = { block: sel.end.block, offset: sel.end.offset };
+      if (sel.collapsed) {
+        const word = wordAt(segmentsOf(start.block).segments, start.offset);
+        if (!word) {
+          onInfo("Select the text to format.");
+          return null;
+        }
+        start = { block: start.block, offset: word[0] };
+        end = { block: start.block, offset: word[1] };
+      }
+      const paragraphs = [];
+      for (let b = start.block; b <= end.block; b++) {
+        if (doc.model.blocks[b]?.type === "paragraph") paragraphs.push(segmentsOf(b));
+      }
+      const splices = formatRange(paragraphs, start.offset, end.offset, format);
+      const caret = sel.collapsed ? { block: sel.start.block, offset: sel.start.offset } : null;
+      return {
+        edits: splices.map((s) => ({ op: "splice", ...s })),
+        after: () => (caret ? placeCaret(caret.block, caret.offset) : setSelection(blockEl, start, end)),
+      };
+    });
+  }
+
+  /** Paragraph blocks touched by the selection. */
+  function selectedParagraphs(sel) {
+    const blocks = [];
+    for (let b = sel.start.block; b <= sel.end.block; b++) {
+      if (doc.model.blocks[b]?.type === "paragraph") blocks.push(b);
+    }
+    return blocks;
+  }
+
+  /**
+   * Applies a paragraph format to the paragraphs in the selection. `format`
+   * is a ParagraphFormat, or a function (paragraph, block) → format for
+   * per-paragraph changes (e.g. increasing each one's indent).
+   */
+  function formatParagraphs(format) {
+    const sel = editableSelection();
+    if (!sel) return Promise.resolve();
+    return runEdit(() => {
+      const edits = [];
+      for (const block of selectedParagraphs(sel)) {
+        const f = typeof format === "function" ? format(doc.model.blocks[block], block) : format;
+        if (!f) continue;
+        const prev = edits[edits.length - 1];
+        // Neighbouring paragraphs with the same change share one edit.
+        if (prev && prev.last === block - 1 && JSON.stringify(prev.format) === JSON.stringify(f)) prev.last = block;
+        else edits.push({ op: "format_paragraphs", first: block, last: block, format: f });
+      }
+      const start = { block: sel.start.block, offset: sel.start.offset };
+      const end = { block: sel.end.block, offset: sel.end.offset };
+      return { edits, after: () => (sel.collapsed ? placeCaret(start.block, start.offset) : setSelection(blockEl, start, end)) };
+    });
+  }
+
+  /**
+   * Formatting at the start of the selection, for the toolbar:
+   * {run: RunProps, paragraph: Paragraph, list: "bullet"|"number"|null,
+   * paragraphs: Paragraph[]}, or null.
+   */
+  function currentFormat() {
+    if (!doc) return null;
+    const sel = selectionInfo(root);
+    if (!sel || !sel.start.editable) return null;
+    const { paragraph, segments } = segmentsOf(sel.start.block);
+    const offset = sel.collapsed ? sel.start.offset : Math.min(sel.start.offset + 1, segmentsLength(segments));
+    return {
+      run: formatAt(paragraph, segments, offset),
+      paragraph,
+      list: listKind(doc.model, paragraph),
+      paragraphs: selectedParagraphs(sel).map((b) => doc.model.blocks[b]),
+    };
   }
 
   function previousParagraph(block) {
@@ -221,6 +348,8 @@ export function createEditor(root, { onChange, onError, onInfo = () => {} }) {
   function handleInput(type, data) {
     if (type.startsWith("format") || BLOCKED_INPUT.has(type)) {
       if (type === "historyUndo" || type === "historyRedo") onInfo("Undo and redo are not available yet.");
+      const command = { formatBold: { bold: true }, formatItalic: { italic: true }, formatUnderline: { underline: true }, formatStrikeThrough: { strike: true } }[type];
+      if (command) onCommand(Object.keys(command)[0]);
       return true;
     }
     const sel = selectionInfo(root);
@@ -363,6 +492,9 @@ export function createEditor(root, { onChange, onError, onInfo = () => {} }) {
     unload,
     /** Sends any pending changes; resolves when they are applied. */
     flush: () => (doc ? sync() : Promise.resolve()),
+    formatText,
+    formatParagraphs,
+    currentFormat,
     /** Whether changes are waiting to be sent. */
     hasPendingChanges: () => dirty.size > 0 || structuralPending || replayQueue.length > 0,
     get document() {

@@ -302,3 +302,192 @@ export function remapAfterSplice(pieces) {
   }
   return map;
 }
+
+// ----- Formatting -----
+
+/**
+ * Splices that apply a run format to the text between `start` and `end`
+ * (positions as for replaceRange, possibly in different paragraphs). Text
+ * outside the range and objects inside it are kept; selected text is
+ * rewritten with its own run's formatting plus `format`. Returns one splice
+ * per paragraph that has selected text (paragraph count never changes).
+ *
+ * @param {Array<{block: number, paragraph: object, segments: object[]}>} paragraphs  The paragraphs from start to end, in order.
+ * @param {number} startOffset  Offset in the first paragraph.
+ * @param {number} endOffset  Offset in the last paragraph.
+ * @param {object} format  A RunFormat (see the engine): e.g. {bold: true}.
+ */
+export function formatRange(paragraphs, startOffset, endOffset, format) {
+  const splices = [];
+  paragraphs.forEach((para, i) => {
+    const from = i === 0 ? startOffset : 0;
+    const to = i === paragraphs.length - 1 ? endOffset : segmentsLength(para.segments);
+    if (to <= from) return;
+    const { before, after: rest } = splitSegments(para.segments, from);
+    const { before: middle, after } = splitSegments(rest, to - from);
+    if (!middle.some((s) => s.kind === "text" && s.text)) return;
+
+    const content = [];
+    let lastKept = -1;
+    const keepOrText = (seg, i, all) => {
+      for (const piece of segmentsToPieces(para.block, para.paragraph, [seg])) {
+        if (piece.type === "keep") {
+          if (seg.kind === "text" && seg.text !== runText(para.paragraph.inlines[seg.inline])) {
+            content.push({ type: "text", text: seg.text, like: { block: para.block, inline: seg.inline } });
+            continue;
+          }
+          if (piece.inline <= lastKept) continue;
+          lastKept = piece.inline;
+        } else if (!piece.like) {
+          const source = fallbackFormat(para.paragraph, all, i);
+          if (source !== null) piece.like = { block: para.block, inline: source };
+        }
+        content.push(piece);
+      }
+    };
+    before.forEach((seg, i) => keepOrText(seg, i, before));
+    middle.forEach((seg, i) => {
+      if (seg.kind !== "text") return keepOrText(seg, i, middle);
+      const source = seg.inline !== null ? seg.inline : fallbackFormat(para.paragraph, middle, i);
+      const piece = { type: "text", text: seg.text, format };
+      if (source !== null && para.paragraph.inlines[source]?.type === "run") piece.like = { block: para.block, inline: source };
+      content.push(piece);
+    });
+    after.forEach((seg, i) => keepOrText(seg, i, after));
+    splices.push({ first: para.block, last: para.block, content });
+  });
+  return splices;
+}
+
+/** The word around `offset` in segments' text, as [start, end), or null. */
+export function wordAt(segments, offset) {
+  const text = segmentsText(segments);
+  const isWord = (ch) => ch !== undefined && /[\p{L}\p{N}_'’-]/u.test(ch);
+  let start = offset;
+  let end = offset;
+  while (start > 0 && isWord(text[start - 1])) start--;
+  while (end < text.length && isWord(text[end])) end++;
+  return end > start ? [start, end] : null;
+}
+
+/**
+ * Run properties at a caret position: those of the text just before it
+ * (or just after it at the start of a paragraph). Empty when unknown.
+ */
+export function formatAt(paragraph, segments, offset) {
+  let pos = 0;
+  let found = null;
+  for (const seg of segments) {
+    const len = seg.kind === "text" ? seg.text.length : 1;
+    if (seg.kind === "text" && seg.inline !== null) {
+      if (offset > pos && offset <= pos + len) return paragraph.inlines[seg.inline]?.props || {};
+      if (found === null && offset <= pos) found = seg.inline;
+    }
+    pos += len;
+  }
+  if (found === null) {
+    const first = segments.find((s) => s.kind === "text" && s.inline !== null);
+    if (first) found = first.inline;
+  }
+  return found !== null ? paragraph.inlines[found]?.props || {} : {};
+}
+
+const ROMAN = [[1000, "m"], [900, "cm"], [500, "d"], [400, "cd"], [100, "c"], [90, "xc"], [50, "l"], [40, "xl"], [10, "x"], [9, "ix"], [5, "v"], [4, "iv"], [1, "i"]];
+
+function toRoman(n) {
+  let out = "";
+  for (const [value, digits] of ROMAN) {
+    while (n >= value) {
+      out += digits;
+      n -= value;
+    }
+  }
+  return out;
+}
+
+function toLetters(n) {
+  let out = "";
+  while (n > 0) {
+    n -= 1;
+    out = String.fromCharCode(97 + (n % 26)) + out;
+    n = Math.floor(n / 26);
+  }
+  return out;
+}
+
+/** Formats a list counter in a w:numFmt style. */
+export function formatCounter(n, format) {
+  switch (format) {
+    case "lowerLetter":
+      return toLetters(n);
+    case "upperLetter":
+      return toLetters(n).toUpperCase();
+    case "lowerRoman":
+      return toRoman(n);
+    case "upperRoman":
+      return toRoman(n).toUpperCase();
+    case "decimalZero":
+      return n < 10 ? `0${n}` : String(n);
+    case "none":
+      return "";
+    default:
+      return String(n);
+  }
+}
+
+/**
+ * List markers for every list paragraph of the model, by block index
+ * (e.g. {4: "1.", 5: "2.", 6: "a."}). Counters run per list and level;
+ * a higher-level item restarts the levels below it.
+ */
+export function listMarkers(model) {
+  const defs = new Map((model.lists || []).map((d) => [d.num_id, d]));
+  const counters = new Map();
+  const markers = {};
+  (model.blocks || []).forEach((block, index) => {
+    if (block.type !== "paragraph" || !block.numbering) return;
+    const def = defs.get(block.numbering.num_id);
+    if (!def) return;
+    const level = Math.min(block.numbering.level || 0, def.levels.length - 1);
+    if (level < 0) return;
+    const counts = counters.get(def.num_id) || [];
+    for (let l = 0; l <= level; l++) {
+      if (counts[l] === undefined) counts[l] = (def.levels[l]?.start ?? 1) - 1;
+    }
+    counts[level] += 1;
+    counts.length = level + 1;
+    counters.set(def.num_id, counts);
+    const lvl = def.levels[level];
+    if (lvl.format === "bullet") {
+      markers[index] = bulletGlyph(lvl.text);
+      return;
+    }
+    markers[index] = (lvl.text || `%${level + 1}.`).replace(/%(\d)/g, (_, k) => {
+      const l = Number(k) - 1;
+      const value = counts[l] ?? def.levels[l]?.start ?? 1;
+      return formatCounter(value, def.levels[l]?.format || "decimal");
+    });
+  });
+  return markers;
+}
+
+// Word writes bullets as Symbol/Wingdings glyphs in the Private Use Area
+// (e.g. U+F0B7 in the Symbol font is "•"); map the common ones.
+const SYMBOL_BULLETS = { 0xf0b7: "•", 0xf0a7: "▪", 0xf0a8: "◦", 0xf076: "❖", 0xf0d8: "➢", 0xf0fc: "✓", 0xf06e: "■", 0xf071: "❑", 0xf0e0: "➢" };
+
+/** A displayable bullet for a level's text. */
+export function bulletGlyph(text) {
+  if (!text) return "•";
+  const code = text.codePointAt(0);
+  if (code >= 0xe000 && code <= 0xf8ff) return SYMBOL_BULLETS[code] || "•";
+  return text;
+}
+
+/** The list kind ("bullet" or "number") of a paragraph, or null. */
+export function listKind(model, paragraph) {
+  if (!paragraph || !paragraph.numbering) return null;
+  const def = (model.lists || []).find((d) => d.num_id === paragraph.numbering.num_id);
+  const level = def && def.levels[paragraph.numbering.level || 0];
+  if (!level) return null;
+  return level.format === "bullet" ? "bullet" : "number";
+}

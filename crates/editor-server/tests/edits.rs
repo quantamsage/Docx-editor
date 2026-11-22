@@ -288,3 +288,35 @@ async fn images_referenced_by_the_document_are_served() {
     let res = client.send(Method::GET, &format!("/api/documents/999/media/{part}"), "application/json", vec![]).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn formatting_edits_apply_through_the_api() {
+    let client = Client::new();
+    let id = client.new_document().await;
+    let res = client
+        .edit(
+            id,
+            json!({"base_revision": 0, "edits": [
+                {"op": "splice", "first": 0, "last": 0, "content": [{"type": "text", "text": "Bold title", "format": {"bold": true, "size": 32}}]},
+                {"op": "format_paragraphs", "first": 0, "last": 0, "format": {"style_id": "Heading1", "alignment": "center", "list": {"kind": "number"}}}
+            ]}),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", String::from_utf8_lossy(&res.body));
+    let model = &res.json()["model"];
+    let p = &model["blocks"][0];
+    assert_eq!(p["style_id"], "Heading1");
+    assert_eq!(p["alignment"], "center");
+    assert_eq!(p["inlines"][0]["props"]["bold"], true);
+    assert_eq!(p["inlines"][0]["props"]["size"], 32);
+    assert_eq!(model["lists"][0]["levels"][0]["format"], "decimal");
+    assert_eq!(p["numbering"]["num_id"], model["lists"][0]["num_id"]);
+
+    // Invalid formats are refused and change nothing.
+    let res = client
+        .edit(id, json!({"base_revision": 1, "edits": [{"op": "format_paragraphs", "first": 0, "last": 0, "format": {"spacing": {"line": 1}}}]}))
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let saved = Document::open(&client.download(id).await).unwrap().model();
+    assert_eq!(saved.lists.len(), 1);
+}

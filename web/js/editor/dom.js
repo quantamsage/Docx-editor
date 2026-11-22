@@ -190,3 +190,22 @@ export function insertTextAtSelection(doc, text) {
   selection.removeAllRanges();
   selection.addRange(range);
 }
+
+/**
+ * Selects from {block, offset} to {block, offset} (block elements found
+ * with `blockEl`). A collapsed range when both positions are equal.
+ */
+export function setSelection(blockEl, start, end) {
+  const startEl = blockEl(start.block);
+  const endEl = blockEl(end.block);
+  if (!startEl || !endEl) return;
+  const doc = startEl.ownerDocument;
+  const a = positionAt(startEl, Math.min(start.offset, paragraphLength(startEl)));
+  const b = positionAt(endEl, Math.min(end.offset, paragraphLength(endEl)));
+  const range = doc.createRange();
+  range.setStart(a.node, a.offset);
+  range.setEnd(b.node, b.offset);
+  const selection = doc.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}

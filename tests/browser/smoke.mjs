@@ -215,6 +215,66 @@ async function main() {
     await press("Delete", "Delete", 46);
     check(await waitForServer(1, ["Helloworld and moreSecond paragraph"]), "after a join the caret is at the join point; Delete works inside a paragraph");
 
+    // Formatting through the toolbar and keyboard.
+    const selectText = (block, from, to) =>
+      evaluate(`(() => {
+        const content = document.getElementById("doc-content");
+        content.focus();
+        const p = content.querySelector('[data-block="${block}"]');
+        const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        const at = (offset) => { let left = offset, node; walker.currentNode = p; while ((node = walker.nextNode())) { if (left <= node.data.length) return [node, left]; left -= node.data.length; } return [p, p.childNodes.length]; };
+        const range = document.createRange();
+        range.setStart(...at(${from}));
+        range.setEnd(...at(${to}));
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      })()`);
+    const serverModel = (id) => evaluate(`fetch("/api/documents/${id}").then((r) => r.json()).then((d) => d.model)`);
+    const waitForModel = async (id, predicate, label) => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        if (predicate(await serverModel(id))) return true;
+        await sleep(150);
+      }
+      console.log(`     ${label}: ${JSON.stringify((await serverModel(id)).blocks[0]).slice(0, 400)}`);
+      return false;
+    };
+    const runs = (m) => m.blocks[0].inlines.filter((i) => i.type === "run");
+    const runWith = (m, text) => runs(m).find((r) => r.content.some((c) => c.text === text));
+
+    check(await waitFor(`!document.querySelector('[data-format="bold"]').disabled`), "the formatting toolbar is enabled in a document");
+    await selectText(0, 0, 10); // "Helloworld"
+    await evaluate(`document.querySelector('[data-format="bold"]').click()`);
+    check(await waitForModel(1, (m) => runWith(m, "Helloworld")?.props.bold === true && !runWith(m, " and moreSecond paragraph")?.props.bold, "bold"), "Bold formats only the selection");
+    check(await waitFor(`document.querySelector('[data-format="bold"]').getAttribute("aria-pressed") === "true"`), "the Bold button shows the selection is bold");
+
+    await selectText(0, 0, 10);
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "i", code: "KeyI", windowsVirtualKeyCode: 73, modifiers: 2 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "i", code: "KeyI", windowsVirtualKeyCode: 73, modifiers: 2 });
+    check(await waitForModel(1, (m) => runWith(m, "Helloworld")?.props.italic === true && runWith(m, "Helloworld")?.props.bold === true, "italic"), "Ctrl+I adds italic and keeps bold");
+
+    await selectText(0, 0, 10);
+    await evaluate(`(() => { const s = document.getElementById("font-size"); s.value = "28"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    check(await waitForModel(1, (m) => runWith(m, "Helloworld")?.props.size === 28, "size"), "the size menu sets 14 pt");
+
+    await caretAt(0, 3);
+    await evaluate(`(() => { const s = document.getElementById("style-select"); s.value = "Heading1"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    check(await waitForModel(1, (m) => m.blocks[0].style_id === "Heading1", "style"), "the style menu applies Heading 1");
+    check(await waitFor(`!!document.querySelector('#doc-content [data-block="0"].para-heading-1')`), "the heading is shown with its style");
+
+    await caretAt(0, 3);
+    await evaluate(`document.querySelector('[data-format="align"][data-value="center"]').click()`);
+    check(await waitForModel(1, (m) => m.blocks[0].alignment === "center", "align"), "Centre aligns the paragraph");
+
+    await caretAt(0, 3);
+    await evaluate(`document.querySelector('[data-format="list"][data-value="bullet"]').click()`);
+    check(await waitForModel(1, (m) => m.blocks[0].numbering && m.lists.length === 1 && m.lists[0].levels[0].format === "bullet", "bullets"), "Bulleted list creates a list in a new document");
+    check(await waitFor(`document.querySelector('#doc-content [data-block="0"]').dataset.marker === "•"`), "the list marker is shown");
+    check(await waitFor(`document.querySelector('[data-format="list"][data-value="bullet"]').getAttribute("aria-pressed") === "true"`), "the list button shows the paragraph is in a list");
+    const saved = await evaluate(`fetch("/api/documents/1/download").then((r) => r.arrayBuffer()).then((b) => b.byteLength)`);
+    check(saved > 2000, `the formatted document saves (${saved} bytes)`);
+
     // Open the Word fixture by dropping it (accept the discard prompt).
     await evaluate(`window.confirm = () => true`);
     await drop(readFileSync(FIXTURE).toString("base64"), "word-sample.docx");

@@ -268,10 +268,18 @@ body {
 .para-title { font-size: 28pt; letter-spacing: -0.5pt; margin: 0; }
 .para-subtitle { font-size: 11pt; color: #5a5a5a; letter-spacing: 0.75pt; }
 .para-quote { font-style: italic; color: #404040; text-align: center; margin: 10pt 43pt; }
-.para-list { padding-left: 0.25in; position: relative; }
-.para-list::before { content: "•"; position: absolute; left: 0; }
-.para-list[data-level="1"] { padding-left: 0.5in; }
-.para-list[data-level="2"] { padding-left: 0.75in; }
+/* List items: the marker hangs in the indent, like Word's hanging indent. */
+.para-list { position: relative; }
+.para-list[data-marker]::before {
+  content: attr(data-marker);
+  position: absolute;
+  left: -0.25in;
+  width: 0.25in;
+  font-style: normal;
+  font-weight: normal;
+  text-decoration: none;
+}
+.para-list:not([style*="margin-left"]) { margin-left: 0.5in; }
 
 /* Objects inside paragraphs: shown, kept, not edited. */
 .obj { user-select: all; }
@@ -302,3 +310,11 @@ body {
   border-left: 3px solid rgba(43, 87, 154, 0.35);
   cursor: default;
 }
+
+/* Formatting toolbar controls (Phase 4) */
+.tool-select-narrow { width: 7.75rem; }
+.tool-color { position: relative; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.tool-color input[type="color"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+.tool-color:has(input:disabled) { color: #a19f9d; cursor: not-allowed; }
+.tool-color:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.tool[aria-pressed="true"] { box-shadow: inset 0 -2px 0 var(--title-bg); }
