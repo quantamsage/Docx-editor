@@ -9,6 +9,8 @@
 //! * `POST /api/documents/{id}/images` — upload a picture (PNG, JPEG, GIF or
 //!   BMP bytes) to insert with a later edit → `{id, format, width_px,
 //!   height_px}`.
+//! * `POST /api/documents/{id}/undo`, `POST /api/documents/{id}/redo` —
+//!   undo or redo the last edit batch (JSON `{"base_revision": n}`).
 //! * `GET /api/documents/{id}/media/{part}` — an image the document shows.
 //! * `GET /api/documents/{id}/download?name=<file name>` — the saved `.docx`.
 //! * `DELETE /api/documents/{id}` — close the document.
@@ -27,6 +29,7 @@ use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use docx_engine::history::History;
 use docx_engine::{Document, DocumentModel, DocxError, Edit};
 use serde::{Deserialize, Serialize};
 
@@ -57,8 +60,15 @@ pub struct OpenDocument {
     pub document: Document,
     /// Incremented by every applied edit batch. Edits address paragraphs
     /// and inlines by position, so a client must say which revision its
-    /// positions refer to.
+    /// positions refer to. Undo and redo also count as revisions.
     pub revision: u64,
+    pub history: History,
+}
+
+impl OpenDocument {
+    pub fn new(name: String, document: Document) -> Self {
+        Self { name, document, revision: 0, history: History::new() }
+    }
 }
 
 /// All open documents.
@@ -109,6 +119,8 @@ pub fn routes() -> Router<AppState> {
         .route("/{id}", get(fetch).delete(close))
         .route("/{id}/download", get(download))
         .route("/{id}/edits", post(edit).layer(DefaultBodyLimit::max(MAX_EDIT_BYTES)))
+        .route("/{id}/undo", post(undo))
+        .route("/{id}/redo", post(redo))
         .route("/{id}/images", post(upload_image).layer(DefaultBodyLimit::max(MAX_IMAGE_BYTES)))
         .route("/{id}/media/{*part}", get(media))
 }
@@ -120,6 +132,8 @@ pub struct DocumentResponse {
     pub name: String,
     pub modified: bool,
     pub revision: u64,
+    pub can_undo: bool,
+    pub can_redo: bool,
     pub model: DocumentModel,
 }
 
@@ -129,6 +143,8 @@ fn respond(id: u64, doc: &OpenDocument) -> DocumentResponse {
         name: doc.name.clone(),
         modified: doc.document.is_modified(),
         revision: doc.revision,
+        can_undo: doc.history.can_undo(),
+        can_redo: doc.history.can_redo(),
         model: doc.document.model(),
     }
 }
@@ -139,7 +155,7 @@ pub struct NameQuery {
 }
 
 async fn create(State(state): State<AppState>) -> Result<(StatusCode, Json<DocumentResponse>), ApiError> {
-    let doc = OpenDocument { name: UNTITLED.to_string(), document: Document::new_blank(), revision: 0 };
+    let doc = OpenDocument::new(UNTITLED.to_string(), Document::new_blank());
     let response = respond(0, &doc);
     let id = state.store().insert(doc)?;
     Ok((StatusCode::CREATED, Json(DocumentResponse { id, ..response })))
@@ -177,8 +193,9 @@ async fn open(
     .map_err(docx_error)?;
 
     tracing::info!(name = %name, blocks = model.blocks.len(), "document opened");
-    let id = state.store().insert(OpenDocument { name: name.clone(), document, revision: 0 })?;
-    Ok((StatusCode::CREATED, Json(DocumentResponse { id, name, modified: false, revision: 0, model })))
+    let id = state.store().insert(OpenDocument::new(name.clone(), document))?;
+    let response = DocumentResponse { id, name, modified: false, revision: 0, can_undo: false, can_redo: false, model };
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 async fn fetch(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Json<DocumentResponse>, ApiError> {
@@ -229,6 +246,17 @@ pub struct EditRequest {
     /// The revision the edits' positions refer to.
     base_revision: u64,
     edits: Vec<Edit>,
+    /// Consecutive batches with the same group (e.g. typing in one
+    /// paragraph) are undone together.
+    #[serde(default)]
+    group: Option<String>,
+}
+
+/// Body of `POST /api/documents/{id}/undo` and `/redo`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryRequest {
+    base_revision: u64,
 }
 
 async fn edit(
@@ -254,14 +282,17 @@ async fn edit(
     let response = tokio::task::spawn_blocking(move || {
         let mut doc = entry.lock().unwrap_or_else(|p| p.into_inner());
         if doc.revision != request.base_revision {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "stale_revision",
-                "The document changed since this edit was made. Reload it and repeat the change.",
-            ));
+            return Err(stale_revision());
         }
         if !request.edits.is_empty() {
-            doc.document.apply(&request.edits).map_err(docx_error)?;
+            let doc = &mut *doc;
+            let recorded = doc.history.record(&doc.document, request.group.as_deref());
+            if let Err(err) = doc.document.apply(&request.edits) {
+                if recorded {
+                    doc.history.forget_last();
+                }
+                return Err(docx_error(err));
+            }
             doc.revision += 1;
         }
         Ok(respond(id, &doc))
@@ -306,6 +337,65 @@ async fn upload_image(
         other => docx_error(other),
     })?;
     Ok((StatusCode::CREATED, Json(info)))
+}
+
+fn stale_revision() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "stale_revision",
+        "The document changed since this edit was made. Reload it and repeat the change.",
+    )
+}
+
+async fn undo(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    body: Result<Json<HistoryRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<DocumentResponse>, ApiError> {
+    step_history(state, id, body, true).await
+}
+
+async fn redo(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    body: Result<Json<HistoryRequest>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<DocumentResponse>, ApiError> {
+    step_history(state, id, body, false).await
+}
+
+async fn step_history(
+    state: AppState,
+    id: u64,
+    body: Result<Json<HistoryRequest>, axum::extract::rejection::JsonRejection>,
+    undo: bool,
+) -> Result<Json<DocumentResponse>, ApiError> {
+    let Json(request) = body.map_err(|rejection| {
+        ApiError::new(StatusCode::BAD_REQUEST, "bad_request", format!("Invalid request: {}", rejection.body_text()))
+    })?;
+    let entry = state.store().get(id)?;
+    let response = tokio::task::spawn_blocking(move || {
+        let mut doc = entry.lock().unwrap_or_else(|p| p.into_inner());
+        if doc.revision != request.base_revision {
+            return Err(stale_revision());
+        }
+        let doc = &mut *doc;
+        let stepped = if undo { doc.history.undo(&mut doc.document) } else { doc.history.redo(&mut doc.document) };
+        match stepped.map_err(docx_error)? {
+            true => doc.revision += 1,
+            false => {
+                let (code, message) = if undo {
+                    ("nothing_to_undo", "There is nothing to undo.")
+                } else {
+                    ("nothing_to_redo", "There is nothing to redo.")
+                };
+                return Err(ApiError::new(StatusCode::CONFLICT, code, message));
+            }
+        }
+        Ok(respond(id, doc))
+    })
+    .await
+    .map_err(|_| internal_error())??;
+    Ok(Json(response))
 }
 
 /// Image types the browser can display. SVG is excluded: served from this

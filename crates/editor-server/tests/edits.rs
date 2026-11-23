@@ -406,3 +406,62 @@ async fn tables_headers_and_page_setup_through_the_api() {
     let docx_engine::model::Block::Paragraph(p) = &footer.blocks[0] else { panic!() };
     assert_eq!(p.plain_text(), "Page 1");
 }
+
+async fn step(client: &Client, id: u64, op: &str, base: u64) -> Response {
+    let body = json!({"base_revision": base}).to_string().into_bytes();
+    client.send(Method::POST, &format!("/api/documents/{id}/{op}"), "application/json", body).await
+}
+
+#[tokio::test]
+async fn undo_and_redo_step_through_edit_batches() {
+    let client = Client::new();
+    let id = client.new_document().await;
+    let typed = |text: &str, base: u64, group: Option<&str>| {
+        let mut body = json!({"base_revision": base, "edits": [{"op": "splice", "first": 0, "last": 0, "content": [{"type": "text", "text": text}]}]});
+        if let Some(group) = group {
+            body["group"] = json!(group);
+        }
+        body
+    };
+
+    let fresh = client.send(Method::GET, &format!("/api/documents/{id}"), "application/json", vec![]).await.json();
+    assert_eq!((fresh["can_undo"].as_bool(), fresh["can_redo"].as_bool()), (Some(false), Some(false)));
+    let res = step(&client, id, "undo", 0).await;
+    assert_eq!((res.status, res.json()["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("nothing_to_undo")));
+
+    // Two batches of typing in one group, then a separate edit.
+    client.edit(id, typed("H", 0, Some("typing-1"))).await;
+    client.edit(id, typed("Hi", 1, Some("typing-1"))).await;
+    let res = client.edit(id, typed("Hi there", 2, None)).await.json();
+    assert_eq!((res["revision"].as_u64(), res["can_undo"].as_bool()), (Some(3), Some(true)));
+
+    let res = step(&client, id, "undo", 3).await;
+    assert_eq!(res.status, StatusCode::OK);
+    let body = res.json();
+    assert_eq!(texts(&body["model"]), ["Hi"]);
+    assert_eq!((body["revision"].as_u64(), body["can_redo"].as_bool()), (Some(4), Some(true)));
+    let body = step(&client, id, "undo", 4).await.json();
+    assert_eq!(texts(&body["model"]), [""], "the typing group is one step");
+    assert_eq!((body["can_undo"].as_bool(), body["modified"].as_bool()), (Some(false), Some(false)));
+
+    let body = step(&client, id, "redo", 5).await.json();
+    assert_eq!(texts(&body["model"]), ["Hi"]);
+    assert_eq!(step(&client, id, "redo", 5).await.status, StatusCode::CONFLICT, "stale revision");
+    let body = step(&client, id, "redo", 6).await.json();
+    assert_eq!(texts(&body["model"]), ["Hi there"]);
+    assert_eq!(body["can_redo"], false);
+    let saved = Document::open(&client.download(id).await).unwrap().model();
+    assert_eq!(texts(&serde_json::to_value(&saved).unwrap()), ["Hi there"]);
+
+    // A failed batch leaves no undo step.
+    let res = client.edit(id, json!({"base_revision": 7, "edits": [{"op": "delete_block", "block": 9}]})).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let body = step(&client, id, "undo", 7).await.json();
+    assert_eq!(texts(&body["model"]), ["Hi"]);
+    for bad in [json!({}), json!({"base_revision": 8, "extra": true})] {
+        let res = client
+            .send(Method::POST, &format!("/api/documents/{id}/undo"), "application/json", bad.to_string().into_bytes())
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    }
+}
