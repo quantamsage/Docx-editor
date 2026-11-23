@@ -57,6 +57,15 @@
         <button type="button" class="tool" data-insert="picture" disabled title="Insert a picture from a file (or drop it on the page)">
           <span class="tool-icon" aria-hidden="true">🖼</span><span class="tool-label">Picture</span>
         </button>
+        <button type="button" class="tool" data-insert="header" disabled title="Add or edit the header (or double-click the top of the page)">
+          <span class="tool-icon" aria-hidden="true">▔</span><span class="tool-label">Header</span>
+        </button>
+        <button type="button" class="tool" data-insert="footer" disabled title="Add or edit the footer (or double-click the bottom of the page)">
+          <span class="tool-icon" aria-hidden="true">▁</span><span class="tool-label">Footer</span>
+        </button>
+        <button type="button" class="tool" data-insert="page-numbers" disabled title="Number the pages">
+          <span class="tool-icon" aria-hidden="true">#</span><span class="tool-label">Page numbers</span>
+        </button>
         <input type="file" id="picture-input" accept=".png,.jpg,.jpeg,.gif,.bmp,image/png,image/jpeg,image/gif,image/bmp" hidden>
       </div>
     </nav>
@@ -168,9 +177,9 @@
             <p>Choose <strong>New</strong> to start a blank document, or <strong>Open</strong> (or drop a <code>.docx</code> file here) to load one from your computer.</p>
             <p class="welcome-note">Everything runs on this computer. Documents never leave it.</p>
           </div>
-          <div class="hf hf-header" id="doc-header" role="textbox" aria-multiline="true" aria-label="Header" data-label="Header" spellcheck="true" hidden></div>
+          <div class="hf hf-header" id="doc-header" role="textbox" aria-multiline="true" aria-label="Header" data-label="Header" data-label-lower="header" spellcheck="true" hidden></div>
           <div class="doc-content" id="doc-content" role="textbox" aria-multiline="true" aria-label="Document text" spellcheck="true" hidden></div>
-          <div class="hf hf-footer" id="doc-footer" role="textbox" aria-multiline="true" aria-label="Footer" data-label="Footer" spellcheck="true" hidden></div>
+          <div class="hf hf-footer" id="doc-footer" role="textbox" aria-multiline="true" aria-label="Footer" data-label="Footer" data-label-lower="footer" spellcheck="true" hidden></div>
         </div>
       </div>
     </main>
@@ -183,6 +192,32 @@
           <input type="number" id="table-columns" min="1" max="63" value="3" required>
           <label for="table-rows">Rows</label>
           <input type="number" id="table-rows" min="1" max="500" value="2" required>
+        </div>
+        <div class="dialog-buttons">
+          <button type="submit" value="cancel" class="button" formnovalidate>Cancel</button>
+          <button type="submit" value="ok" class="button button-primary">Insert</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="page-numbers-dialog" aria-labelledby="page-numbers-title">
+      <form method="dialog" class="dialog-form">
+        <h2 id="page-numbers-title">Page numbers</h2>
+        <div class="dialog-grid">
+          <label for="page-numbers-position">Position</label>
+          <select id="page-numbers-position">
+            <option value="footer">Bottom of page (footer)</option>
+            <option value="header">Top of page (header)</option>
+          </select>
+          <label for="page-numbers-alignment">Alignment</label>
+          <select id="page-numbers-alignment">
+            <option value="left">Left</option>
+            <option value="center" selected>Centre</option>
+            <option value="right">Right</option>
+          </select>
+          <label class="span-2"><input type="checkbox" id="page-numbers-total"> Show the page count (“Page 1 of 3”)</label>
+          <label for="page-numbers-start">Start at</label>
+          <input type="number" id="page-numbers-start" min="0" max="32767" placeholder="Continue">
         </div>
         <div class="dialog-buttons">
           <button type="submit" value="cancel" class="button" formnovalidate>Cancel</button>

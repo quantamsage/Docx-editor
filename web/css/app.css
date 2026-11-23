@@ -412,3 +412,8 @@ body {
   cursor: nwse-resize;
   touch-action: none;
 }
+.hf[data-empty="true"]:hover::before {
+  content: "Double-click to add a " attr(data-label-lower);
+  font: 0.75rem var(--ui-font);
+  color: var(--muted);
+}

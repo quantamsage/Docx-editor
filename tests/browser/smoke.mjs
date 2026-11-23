@@ -302,6 +302,29 @@ async function main() {
     await evaluate(`document.querySelector('[data-table="delete-row"]').click()`);
     check(await waitForModel(1, (m) => tableOf(m)?.rows.length === 2, "delete row"), "Delete row removes the row");
 
+    // Add a header and type in it; number the pages in the footer.
+    check(await evaluate(`document.getElementById("doc-header").dataset.empty === "true"`), "a new document has no header");
+    await caretAt(0, 0);
+    await evaluate(`document.querySelector('[data-insert="header"]').click()`);
+    check(await waitForModel(1, (m) => m.header?.part === "word/header1.xml", "header"), "Header adds a header to the document");
+    check(await waitFor(`document.getElementById("doc-header").isContentEditable && document.getSelection().anchorNode && document.getElementById("doc-header").contains(document.getSelection().anchorNode)`), "the cursor moves into the new header");
+    await type("Project notes");
+    check(
+      await waitForModel(1, (m) => m.header?.blocks[0].inlines?.[0]?.content?.[0]?.text === "Project notes", "header text"),
+      "typing in the new header is saved in the header part",
+    );
+    await caretAt(0, 0);
+    await evaluate(`document.querySelector('[data-insert="page-numbers"]').click()`);
+    check(await waitFor(`document.getElementById("page-numbers-dialog").open`), "Page numbers opens its dialog");
+    await evaluate(`(() => {
+      document.getElementById("page-numbers-alignment").value = "right";
+      document.getElementById("page-numbers-total").checked = true;
+      document.querySelector('#page-numbers-dialog button[value="ok"]').click();
+    })()`);
+    const footerFields = (m) => (m.footer?.blocks || []).flatMap((b) => b.inlines || []).filter((i) => i.field).map((i) => i.field);
+    check(await waitForModel(1, (m) => footerFields(m).join() === "PAGE,NUMPAGES" && m.footer.blocks[0].alignment === "right", "page numbers"), "page numbers with the page count are added to the footer");
+    check(await waitFor(`document.querySelector("#doc-footer .obj-field")?.textContent === "1"`), "the footer shows the page number");
+
     // Open the Word fixture by dropping it (accept the discard prompt).
     await evaluate(`window.confirm = () => true`);
     await drop(readFileSync(FIXTURE).toString("base64"), "word-sample.docx");

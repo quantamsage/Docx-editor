@@ -4,6 +4,7 @@
 
 import { uploadImage } from "../api.js";
 import { pictureSize } from "../layout.js";
+import { containerKey } from "./containers.js";
 import { TABLE_COMMANDS, hasBorders, tableEdits, tableSize } from "./tables.js";
 
 /** Picture types Word and browsers both display. */
@@ -105,7 +106,63 @@ export function createInsertTools({ editor, insertBar, tableBar, onInfo, onError
     input.click();
   }
 
-  const actions = { table: insertTable, picture: choosePicture };
+  /**
+   * Puts the cursor at the end of the header or footer, creating an empty
+   * one first if the document has none.
+   */
+  async function editHeaderFooter(kind) {
+    const has = () => editor.document && editor.document.model[kind];
+    if (!has()) await editor.applyDocumentEdits([{ op: "add_header_footer", kind }]);
+    const hf = has();
+    if (!hf) return;
+    const blocks = hf.blocks || [];
+    const last = Math.max(0, blocks.map((b) => b.type).lastIndexOf("paragraph"));
+    editor.placeCaret(last, Number.MAX_SAFE_INTEGER, containerKey({ part: hf.part }));
+  }
+
+  async function insertPageNumbers() {
+    if (!(await ask($("page-numbers-dialog")))) return;
+    const kind = $("page-numbers-position").value === "header" ? "header" : "footer";
+    const hf = editor.document.model[kind];
+    if (hf && hasPageNumbers(hf.blocks)) {
+      onInfo(`The ${kind} already has page numbers.`);
+      return;
+    }
+    const edits = [
+      {
+        op: "insert_page_numbers",
+        kind,
+        alignment: $("page-numbers-alignment").value,
+        with_total: $("page-numbers-total").checked,
+      },
+    ];
+    const start = $("page-numbers-start").value.trim();
+    if (start !== "") {
+      const n = Number.parseInt(start, 10);
+      if (!(n >= 0 && n <= 32767)) {
+        onInfo("Page numbers can start at 0 to 32767.");
+        return;
+      }
+      edits.push({ op: "format_section", format: { page_number_start: n } });
+    }
+    await editor.applyDocumentEdits(edits);
+  }
+
+  const actions = {
+    table: insertTable,
+    picture: choosePicture,
+    header: () => editHeaderFooter("header"),
+    footer: () => editHeaderFooter("footer"),
+    "page-numbers": insertPageNumbers,
+  };
+
+  // Double-clicking the empty top or bottom margin adds a header or footer.
+  for (const [kind, host] of [["header", editor.hosts[1]], ["footer", editor.hosts[2]]]) {
+    if (!host) continue;
+    host.addEventListener("dblclick", () => {
+      if (editor.document && !editor.document.model[kind]) editHeaderFooter(kind);
+    });
+  }
 
   insertBar.addEventListener("mousedown", (event) => {
     if (event.target.closest("button[data-insert]")) event.preventDefault();
@@ -153,5 +210,12 @@ export function createInsertTools({ editor, insertBar, tableBar, onInfo, onError
     tableBar.querySelector('[data-table="delete-table"]').disabled = Boolean(state.cell.container);
   }
 
-  return { update, tableCommand, insertTable, insertPicture };
+  return { update, tableCommand, insertTable, insertPicture, editHeaderFooter };
+}
+
+/** Whether header or footer blocks already show a page number (a PAGE field). */
+export function hasPageNumbers(blocks) {
+  return (blocks || []).some(
+    (b) => b.type === "paragraph" && (b.inlines || []).some((i) => i.type === "other" && i.field === "PAGE"),
+  );
 }

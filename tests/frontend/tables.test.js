@@ -47,3 +47,12 @@ test("table size from the dialog", () => {
   assert.equal(tableSize("2", "64"), null);
   assert.equal(tableSize("", "3"), null);
 });
+
+test("page numbers are recognised in headers and footers", async () => {
+  const { hasPageNumbers } = await import("../../web/js/editor/insert.js");
+  const field = (f) => ({ type: "paragraph", inlines: [{ type: "other", kind: "fldSimple", text: "1", field: f }] });
+  assert.equal(hasPageNumbers([field("PAGE")]), true);
+  assert.equal(hasPageNumbers([field("NUMPAGES")]), false);
+  assert.equal(hasPageNumbers([]), false);
+  assert.equal(hasPageNumbers(undefined), false);
+});
