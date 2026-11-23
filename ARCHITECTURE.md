@@ -28,6 +28,7 @@ crates/docx-engine/
   src/table.rs                 table edits: new tables, rows, columns, borders, cell properties
   src/media.rs                 pictures: recognizing uploads, DrawingML markup, resizing
   src/check.rs                 schema-order and structure checks Word is strict about
+  src/history.rs               undo and redo: bounded history of document snapshots
   src/document.rs              Document: open, model, containers, edits, parts and relationships, save
   src/blank.rs                 template for new documents
   tests/engine.rs              synthetic "hard cases" document: parsing, preservation, edits, errors
@@ -37,6 +38,8 @@ crates/docx-engine/
   tests/tables.rs              cell editing, inserting tables, rows, columns, borders, cell properties
   tests/pictures.rs            staging, inserting, reusing, resizing and removing pictures
   tests/layout.rs              headers and footers, page numbers, page setup, page breaks
+  tests/history.rs             undo and redo of every kind of edit, grouping, bounds
+  tests/preservation.rs        every edit on both test documents: untouched parts and blocks, constructs, re-saving
   examples/docx_tool.rs        inspect/edit files from the command line
 crates/editor-server/
   src/main.rs                  CLI entry: parse args → bind 127.0.0.1:<port> → open browser → serve
@@ -51,7 +54,8 @@ web/
   index.html, css/app.css      application shell
   js/app.js                    entry point: toolbar, shortcuts, drag & drop, rendering
   js/api.js                    fetch wrapper for the JSON API
-  js/files.js                  file pickers, saving to handles, downloads
+  js/files.js                  file pickers, saving to handles, downloads, save error messages
+  js/drafts.js                 local drafts in IndexedDB, Web Locks, which drafts to offer
   js/documents.js              interpreting the model: page geometry, summary, outline
   js/layout.js                 paper sizes, margin presets, cm conversion, picture sizes
   js/status.js                 status bar: word count, page position, connection monitor
@@ -64,6 +68,8 @@ web/
   js/editor/toolbar.js         formatting toolbar: state from the selection, commands, shortcuts
   js/editor/insert.js          Insert group, dialogs, table toolbar
   js/editor/images.js          selecting pictures and resizing them with a handle
+  js/editor/find.js            find matches and replacement splices (no DOM)
+  js/editor/findbar.js         the find and replace bar, match highlighting
 tests/frontend/                Node test-runner tests for web/js modules
 tests/browser/smoke.mjs        headless-browser test of the real interface
 tests/fixtures/word-sample.docx  document produced by Microsoft Word (see scripts/)
@@ -130,7 +136,7 @@ The editor renders paragraphs as `<p data-block>`, text runs as `<span data-kind
 - **Structural edits** (Enter, Shift+Enter, Backspace/Delete at a paragraph edge, typing/deleting over a multi-paragraph selection, paste) are intercepted in `beforeinput`, sent as one splice after pending typing, and the page is re-rendered from the server's model with the caret at the computed position. Input arriving while one is in flight is queued and replayed.
 - Invisible objects (field codes, comment references) are "sticky": the editor always keeps them, even when the browser deleted them or they are inside a deleted range, so fields are never left half-deleted.
 - Requests run strictly in order and name the document's **revision**; the server refuses edits based on an older revision (`409 stale_revision`). If any edit fails, the editor reloads the document from the server and shows why.
-- Undo/redo, drag-and-drop of content and rich paste are blocked until their phases.
+- Drag-and-drop of content and rich paste are blocked (pasting inserts plain text).
 
 ### Containers
 
@@ -204,6 +210,47 @@ The model's `header` and `footer` are the default header and footer of the last 
 - Pictures are inline only (floating pictures are shown inline and kept as they are); there is no cropping, rotation or text wrapping, and pictures are resized with the mouse or touch, not the keyboard. Pictures can't be pasted from the clipboard; insert or drop the file instead. Strict Open XML documents can't get new pictures, headers or footers.
 - Inserting a column in a table whose cells use percentage or automatic widths keeps those widths; only widths in twips follow the grid.
 
+## Saving and reliability (Phase 6)
+
+### Reliable export
+
+`Document::save` writes only what changed (see the preservation strategy), then reads the archive it produced back: it must open as a Word document (content types, relationships, main part, body) and every part it rewrote must parse. If not, the save fails with `save_failed` and no file is produced, so a bug can never hand the user a file Word would refuse. In the browser, files are written through the File System Access API, which replaces the file only when the whole new content has been written; when writing fails, the message explains the likely cause (file open in Word, read-only, permission refused, disk full) and the document stays unsaved, with its draft.
+
+### Undo and redo
+
+`history.rs` keeps a bounded list of **snapshots** (`Document::snapshot`/`restore`). A snapshot holds the main part and the edited secondary parts as XML text (only when edited), the pictures added (shared, not copied), and the relationship and style caches. Restoring re-parses them; restoring the first snapshot gives back the document as opened, so saving writes the original bytes again (`tests/history.rs`, `tests/preservation.rs`).
+
+- The server records a snapshot before each edit batch and drops it if the batch fails. `POST /api/documents/{id}/undo` and `/redo` (body `{base_revision}`) restore one and bump the revision; responses carry `can_undo` and `can_redo`.
+- Batches with the same `group` join one step. The editor sends typing syncs with a typing group that changes after any other edit, an undo or redo, typing in another paragraph, or five seconds of continuous typing, so a sentence is undone at once rather than per keystroke.
+- At most 200 steps and 96 MiB of snapshots are kept; the oldest go first.
+- The editor sends pending typing before undoing, re-renders the page from the server's answer and puts the cursor back where it was.
+
+### Find and replace
+
+`find.js` searches the model's paragraphs (body, table cells, header, footer) using the same text the editor shows, where every object (picture, link, field) is one character that never matches; matches don't cross paragraphs. The query is escaped into a Unicode regular expression (case-insensitive unless *Match case*; *Whole words* uses Unicode letter and digit boundaries). Replacing builds, per paragraph, the same segments the editor would read from the page and turns them into splice pieces: text outside matches keeps its runs, replacement text takes the formatting where the match starts, objects are kept. Replace all is one edit batch, so one undo step. Matches are highlighted with the CSS Custom Highlight API, which doesn't touch the editable DOM.
+
+### Draft recovery
+
+`drafts.js` stores `{id, name, savedAt, data}` (the `.docx` from the download endpoint) in IndexedDB two seconds after a change while the document is unsaved, and deletes it when the document is saved or its changes are discarded. Each open document holds a Web Lock named after its draft, so the startup check (`draftsToOffer`) skips drafts another tab is editing; drafts older than 30 days are removed. When an edit or a reconnection finds that the server no longer has the document (`404`, e.g. after a restart), the editor reopens it from its draft under the same name and says how old the draft is.
+
+### Error handling
+
+- A sync that fails because the server can't be reached (network error or timeout) keeps the edited paragraphs marked dirty and retries every 3 seconds; the text stays on the page and the user is told once. When the connection monitor sees the server again it flushes pending typing and checks that the document still exists.
+- Other failed edits reload the document from the server (as before) and say which change could not be applied.
+- `nothing_to_undo`/`nothing_to_redo` are shown as information, not errors.
+
+### Testing preservation
+
+`tests/preservation.rs` runs scenarios covering every edit type on the Word-made fixture and on the hard-cases document, and checks for each that only the expected parts were rewritten, that every top-level block the edit didn't touch is byte-identical (longest common subsequence of the body's serialized children), that bookmarks, comment ranges and references, footnote references, complex and simple fields, hyperlinks, content controls, alternate content, extension elements, pictures, section properties, tables and paragraph ids are all still there (in exactly the expected number), that the XML passes `check.rs`, and that saving the result again changes nothing. A final test applies the scenarios one after another and undoes them all, which must give back the original file part for part. All scenario outputs were also opened in Word (`PRESERVATION_OUT` and `scripts/verify-with-word.ps1`), with no repair prompt and with their comments, footnotes, pictures, tables and hyperlinks.
+
+### Limitations (Phase 6)
+
+- Undo history lives in the server's memory with the open document: it is lost when the document is closed or reopened (also when it is recovered from a draft) and when the server restarts.
+- Undo restores the whole document state of each step; the cursor is put back where it was, which may not be where the undone change happened.
+- Find and replace doesn't search inside hyperlinks, fields, content controls, text boxes, footnotes, comments, nested tables or first-page/even-page headers, and replacement text can't contain line breaks.
+- A draft is written at most every two seconds, so the last moments of typing before a crash may be missing; drafts are only kept in the browser profile that was used, and not at all in a private window or when site storage is blocked.
+- Offline typing is kept on the page only; structural edits (Enter, formatting, tables, …) made while the server is unreachable are refused with a message.
+
 ## Safety when opening files
 
 - Archives are read entirely in memory and never extracted to disk.
@@ -220,13 +267,14 @@ The model's `header` and `footer` are the default header and footer of the last 
 | `POST /api/documents/new` | Create a blank document → `{id, name, modified, revision, model}`. |
 | `POST /api/documents/open?name=…` | Body: the `.docx` bytes. Opens it → `{id, name, modified, model}`. |
 | `GET /api/documents/{id}` | The document's current model. |
-| `POST /api/documents/{id}/edits` | Body `{base_revision, edits: [...]}`: applies the edits atomically → the updated document. `409 stale_revision` if the revision is outdated, `400 invalid_edit` if an edit is invalid (nothing is changed). |
+| `POST /api/documents/{id}/edits` | Body `{base_revision, edits: [...], group?}`: applies the edits atomically → the updated document (with `can_undo`/`can_redo`); batches with the same `group` are undone together. `409 stale_revision` if the revision is outdated, `400 invalid_edit` if an edit is invalid (nothing is changed). |
 | `POST /api/documents/{id}/images` | Body: a picture file (at most 25 MiB). Stages it for insertion → `{id, format, width_px, height_px}`; `422 unsupported_image` if it isn't a PNG, JPEG, GIF or BMP. |
 | `GET /api/documents/{id}/media/{part}` | An image part the document, a header or a footer references (PNG, JPEG, GIF, BMP, WebP only), for display. |
 | `GET /api/documents/{id}/download[?name=…]` | The saved `.docx`; `name` renames the document (Save As). |
+| `POST /api/documents/{id}/undo`, `/redo` | Body `{base_revision}`: undo or redo the last edit batch → the updated document. `409 nothing_to_undo`/`nothing_to_redo`, `409 stale_revision`. |
 | `DELETE /api/documents/{id}` | Close the document. |
 
-Errors are `{"error": {"code", "message"}}` with an HTTP status: `invalid_document`/`unsupported_document` (422), `document_too_large` (413), `empty_file` (400), `too_many_documents` (409), `not_found` (404). Parsing and serialization run on Tokio's blocking pool.
+Errors are `{"error": {"code", "message"}}` with an HTTP status: `invalid_document`/`unsupported_document` (422), `document_too_large` (413), `empty_file` (400), `too_many_documents` (409), `not_found` (404), `invalid_edit` (400), `stale_revision`, `nothing_to_undo`, `nothing_to_redo` (409), `unsupported_image` (422), `image_too_large` (413), `save_failed` (500). Parsing and serialization run on Tokio's blocking pool.
 
 The model is JSON: `blocks` (paragraphs with style, alignment, indentation, spacing, numbering and inlines; tables with grid widths, borders, rows and cells with spans, vertical merges, alignment and shading; `other` blocks), `section` (page size, orientation, margins and page number start, in twips), `header`/`footer` (part and blocks), `styles`, `lists`, `headers`/`footers` (all header and footer parts), `stats` and `warnings`. Empty fields are omitted.
 

@@ -2,7 +2,7 @@
 
 A local, web-based editor for Microsoft Word `.docx` documents. A Rust (Axum/Tokio) server runs on your computer and serves a Word-style interface built with plain HTML, CSS and JavaScript. Nothing is sent over the internet.
 
-> **Status: Phase 5 (advanced document features).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop), edit and format their text and paragraphs, edit tables, insert and resize pictures, edit headers and footers, number pages, change the page setup and insert page breaks, and save the document again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing content or formatting you didn't touch. Undo, find & replace and draft recovery come in Phase 6.
+> **Status: Phase 6 (saving and reliability).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop), edit and format their text and paragraphs, edit tables, insert and resize pictures, edit headers and footers, number pages, change the page setup and insert page breaks, undo and redo, find and replace, and save the document again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing content or formatting you didn't touch. Unsaved changes are kept as a local draft and can be recovered after a crash. Final polish (Phase 7) is next.
 
 ## Requirements
 
@@ -32,6 +32,7 @@ Set `RUST_LOG=debug` for more detailed logs. The server only listens on `127.0.0
 - **Open:** choose a `.docx`, `.docm`, `.dotx` or `.dotm` file. The browser reads it and sends it to the local server, which keeps it in memory.
 - **Save:** in Edge/Chrome, writes back to the file you opened (or asks where to save a new document). Elsewhere, the document is downloaded.
 - **Save As:** asks for a new file name and location.
+- Before a file is handed to the browser, the editor reads it back and checks that it opens and that every part it rewrote is well-formed; if not, nothing is written and you are told why. When the file can't be written (it is open in another program, read-only, or permission was refused), the message says so and suggests Save As.
 - Password-protected files and old binary `.doc` files cannot be opened; Word can convert them to `.docx`.
 
 What is preserved: everything. Parts of the file that were not edited are written back byte-for-byte (styles, headers, footers, images, comments, footnotes, numbering, custom XML, settings, …), and inside the main document only edited paragraphs change. See [ARCHITECTURE.md](ARCHITECTURE.md#preservation-guarantees) for details and limitations.
@@ -44,6 +45,9 @@ What is preserved: everything. Parts of the file that were not edited are writte
 - **Paste** inserts plain text; each line becomes a paragraph.
 - Pictures, hyperlinks, page breaks, fields and preserved content are shown as protected objects: you can type around them and delete pictures, links and page breaks, but not edit inside them. Field codes (such as page numbers) and comment markers are always kept. Content controls and tables nested inside tables are shown read-only.
 - Changes are applied to the document in the editor as you type. The title bar shows "Unsaved changes" until you save, and closing the tab asks first.
+- **Undo** (`Ctrl+Z`, toolbar ↶) and **redo** (`Ctrl+Y` or `Ctrl+Shift+Z`, toolbar ↷) work for every change: typing (a run of typing in one paragraph is one step), formatting, tables, pictures, headers and footers, page setup and replacements. The last 200 steps are kept.
+- **Find and replace** (`Ctrl+F`, `Ctrl+H`, or Find): matches are highlighted in the text, tables, header and footer; Enter and Shift+Enter move between them; *Match case* and *Whole words* narrow the search. Replace changes the current match; Replace all changes every match at once and is undone in one step.
+- If the local server can't be reached for a moment, what you type stays on the page and is sent when it is back.
 
 ## Formatting
 
@@ -61,6 +65,14 @@ The formatting toolbar shows the formatting at the cursor and applies changes to
 | Line spacing and paragraph spacing | |
 
 Heading and title styles a document doesn't define are added to it with Word's standard look. Lists reuse the document's own bullet or numbered list where it has one; a document without lists gets a numbering definition added. Formatting is written as ordinary Word properties, so Word shows it the same way.
+
+## Draft recovery
+
+While a document has unsaved changes, the editor keeps a copy of it a couple of seconds after each change, in the browser's own storage for this site (IndexedDB). The copy never leaves the computer and is deleted when you save the document or discard its changes.
+
+- If the browser, the tab or the computer stops before you save, the next time you open the editor it offers to **Recover** the draft (or **Discard** it). A recovered document opens with unsaved changes; save it to keep them.
+- If the editor server was restarted while a document was open, the document is reopened from its draft automatically.
+- A document that is open in another tab is not offered. Drafts older than 30 days are deleted.
 
 ## Tables, pictures and page layout
 
@@ -90,7 +102,7 @@ cargo fmt --check              # formatting
 npm test                       # frontend unit tests (Node's built-in test runner; nothing to install)
 
 cargo build --release
-npm run test:browser           # drives the real interface in headless Edge/Chrome (typing, formatting, tables, pictures, headers, page setup, editing a Word file)
+npm run test:browser           # drives the real interface in headless Edge/Chrome (typing, formatting, tables, pictures, headers, page setup, undo, find and replace, drafts, offline typing, editing a Word file)
 ```
 
 Word compatibility checks (Windows with Microsoft Word installed):
@@ -106,6 +118,6 @@ cargo run -p docx-engine --example docx_tool -- edit tests/fixtures/word-sample.
 
 `docx_tool` can also print a document's structure (`inspect <file.docx>`), check that its XML is in schema order (`check <file.docx>`), and apply edits as the editor sends them (`edit <in> <out> --stage picture.png --json edits.json`).
 
-The browser test can save screenshots (`SCREENSHOT_DIR=<folder>`) and the documents it edited (`SAVE_DIR=<folder>`), for checking them with `docx_tool check` and `scripts/verify-with-word.ps1`.
+The browser test can save screenshots (`SCREENSHOT_DIR=<folder>`) and the documents it edited (`SAVE_DIR=<folder>`), and the preservation tests can keep every document they produce (`PRESERVATION_OUT=<folder> cargo test -p docx-engine --test preservation`), for checking them with `docx_tool check` and `scripts/verify-with-word.ps1`.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the application is organized.
