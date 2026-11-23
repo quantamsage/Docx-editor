@@ -275,6 +275,33 @@ async function main() {
     const saved = await evaluate(`fetch("/api/documents/1/download").then((r) => r.arrayBuffer()).then((b) => b.byteLength)`);
     check(saved > 2000, `the formatted document saves (${saved} bytes)`);
 
+    // Insert a table through the Insert table dialog and change it with the table toolbar.
+    await caretAt(0, 3);
+    await evaluate(`document.querySelector('[data-insert="table"]').click()`);
+    check(await waitFor(`document.getElementById("table-dialog").open`), "Insert table opens its dialog");
+    await evaluate(`(() => {
+      document.getElementById("table-columns").value = "2";
+      document.getElementById("table-rows").value = "2";
+      document.querySelector('#table-dialog button[value="ok"]').click();
+    })()`);
+    const tableOf = (m) => m.blocks.find((b) => b.type === "table");
+    check(await waitForModel(1, (m) => tableOf(m)?.rows.length === 2 && tableOf(m).rows[0].cells.length === 2, "table"), "a 2 × 2 table is inserted");
+    check(await waitFor(`!document.getElementById("table-toolbar").hidden`), "the table toolbar appears with the cursor in the new table");
+    await type("Cell one");
+    check(
+      await waitForModel(1, (m) => tableOf(m)?.rows[0].cells[0].blocks[0].inlines?.[0]?.content?.[0]?.text === "Cell one", "cell"),
+      "typing goes into the first cell",
+    );
+    await evaluate(`document.querySelector('[data-table="row-below"]').click()`);
+    check(await waitForModel(1, (m) => tableOf(m)?.rows.length === 3, "row"), "Row below adds a row");
+    await evaluate(`document.querySelector('[data-table="column-right"]').click()`);
+    check(await waitForModel(1, (m) => tableOf(m)?.grid.length === 3 && tableOf(m).rows.every((r) => r.cells.length === 3), "column"), "Column right adds a column");
+    await evaluate(`document.querySelector('[data-table="borders"]').click()`);
+    check(await waitForModel(1, (m) => tableOf(m)?.borders === false, "borders"), "Borders switches the table's borders off");
+    check(await waitFor(`!!document.querySelector("#doc-content table.table-gridlines")`), "a borderless table shows light gridlines");
+    await evaluate(`document.querySelector('[data-table="delete-row"]').click()`);
+    check(await waitForModel(1, (m) => tableOf(m)?.rows.length === 2, "delete row"), "Delete row removes the row");
+
     // Open the Word fixture by dropping it (accept the discard prompt).
     await evaluate(`window.confirm = () => true`);
     await drop(readFileSync(FIXTURE).toString("base64"), "word-sample.docx");

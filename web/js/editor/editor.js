@@ -470,7 +470,8 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
 
   /**
    * Runs a table command at the cursor's cell. `build(cell, table)` returns
-   * the edits and where the cursor goes afterwards ({row, cell}).
+   * `{edits, caret: {row, cell}}` (the cell the cursor goes to; null when
+   * the table is gone) or `{error}` to tell the user why not.
    */
   function tableCommand(build) {
     const sel = selectionInfo(hosts);
@@ -483,12 +484,15 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       const table = blocksOf(cell.container)[cell.table];
       const built = build(cell, table);
       if (!built) return null;
+      if (built.error) {
+        onInfo(built.error);
+        return null;
+      }
       return {
         edits: built.edits,
         after: () => {
-          if (!built.caret) return;
           const t = blocksOf(cell.container)[cell.table];
-          if (!t || t.type !== "table") {
+          if (!built.caret || !t || t.type !== "table") {
             placeCaret(Math.min(cell.table, blocksOf(cell.container).length - 1), 0, cell.container);
             return;
           }

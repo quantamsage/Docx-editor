@@ -35,7 +35,9 @@ pub static STATIC_ASSETS: &[Asset] = &[
     asset!("js/editor/content.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/dom.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/editor.js", "text/javascript; charset=utf-8"),
+    asset!("js/editor/insert.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/render.js", "text/javascript; charset=utf-8"),
+    asset!("js/editor/tables.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/toolbar.js", "text/javascript; charset=utf-8"),
     asset!("favicon.svg", "image/svg+xml"),
 ];

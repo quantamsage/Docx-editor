@@ -3,6 +3,7 @@
 import { closeDocument, downloadDocument, getHealth, newDocument, openDocument } from "./api.js";
 import { ensureDocxExtension, pageGeometry } from "./documents.js";
 import { createEditor } from "./editor/editor.js";
+import { createInsertTools } from "./editor/insert.js";
 import { createToolbar } from "./editor/toolbar.js";
 import { downloadBlob, pickFile, pickSaveLocation, supportsFileSystemAccess, writeToHandle } from "./files.js";
 import { connectionLabel, createConnectionMonitor, formatPagePosition, formatWordCount } from "./status.js";
@@ -15,6 +16,7 @@ let current = null;
 let busy = false;
 let editor = null;
 let toolbar = null;
+let insertTools = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -75,6 +77,7 @@ function renderDocument() {
   applyPageGeometry(current ? current.model.section : null);
   renderStatus();
   if (toolbar) toolbar.update();
+  if (insertTools) insertTools.update();
 }
 
 function applyPageGeometry(section) {
@@ -313,6 +316,12 @@ function bindEditor() {
     },
   }, { header: $("doc-header"), footer: $("doc-footer") });
   toolbar = createToolbar($("format-toolbar"), editor);
+  insertTools = createInsertTools({
+    editor,
+    insertBar: $("insert-tools"),
+    tableBar: $("table-toolbar"),
+    onInfo: (message) => showNotice(message, "warning"),
+  });
   for (const host of editor.hosts) {
     host.addEventListener("keydown", (event) => toolbar.handleKey(event));
     // Typing changes the page count and the caret's page.
@@ -330,7 +339,10 @@ function bindEditor() {
     if (!current) return;
     renderStatus();
     cancelAnimationFrame(pending);
-    pending = requestAnimationFrame(() => toolbar.update());
+    pending = requestAnimationFrame(() => {
+      toolbar.update();
+      insertTools.update();
+    });
   });
   window.addEventListener("beforeunload", (event) => {
     if (current && (current.unsaved || editor.hasPendingChanges())) {
