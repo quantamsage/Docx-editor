@@ -1,13 +1,14 @@
 // Entry point: wires the interface to the local server.
 
-import { closeDocument, downloadDocument, getHealth, newDocument, openDocument } from "./api.js";
+import { closeDocument, downloadDocument, getDocument, getHealth, newDocument, openDocument } from "./api.js";
 import { ensureDocxExtension, pageGeometry } from "./documents.js";
+import { DRAFT_DELAY_MS, claimDraft, createDraftStore, draftMessage, draftsToOffer, heldLocks, newDraftId } from "./drafts.js";
 import { createEditor } from "./editor/editor.js";
 import { createFindBar } from "./editor/findbar.js";
 import { enablePictureResizing } from "./editor/images.js";
 import { PICTURE_TYPES, createInsertTools } from "./editor/insert.js";
 import { createToolbar } from "./editor/toolbar.js";
-import { downloadBlob, pickFile, pickSaveLocation, supportsFileSystemAccess, writeToHandle } from "./files.js";
+import { downloadBlob, pickFile, pickSaveLocation, saveErrorMessage, supportsFileSystemAccess, writeToHandle } from "./files.js";
 import { connectionLabel, createConnectionMonitor, formatPagePosition, formatWordCount } from "./status.js";
 
 /**
@@ -20,6 +21,103 @@ let editor = null;
 let toolbar = null;
 let insertTools = null;
 let findBar = null;
+
+// ----- Drafts -----
+
+const drafts = createDraftStore();
+/** The open document's draft: {id, lock, timer}. */
+let draft = null;
+
+function startDraft(id = newDraftId()) {
+  endDraft(false);
+  draft = { id, lock: claimDraft(id), timer: null };
+}
+
+/** Stops tracking the draft; `remove` deletes it (changes discarded or saved). */
+function endDraft(remove) {
+  if (!draft) return;
+  clearTimeout(draft.timer);
+  draft.lock.release();
+  if (remove) drafts.remove(draft.id);
+  draft = null;
+}
+
+function scheduleDraft() {
+  if (!draft) return;
+  clearTimeout(draft.timer);
+  draft.timer = setTimeout(writeDraft, DRAFT_DELAY_MS);
+}
+
+/** Stores the document as the server would save it. */
+async function writeDraft() {
+  if (!draft || !current || !current.unsaved || busy) return;
+  const { id } = draft;
+  const { id: docId, name } = current;
+  try {
+    await editor.flush();
+    const data = await downloadDocument(docId);
+    if (draft && draft.id === id && current && current.id === docId && current.unsaved) {
+      await drafts.put({ id, name: current.name || name, savedAt: Date.now(), data });
+    }
+  } catch {
+    // Keep the previous draft; the next change tries again.
+  }
+}
+
+let offered = [];
+
+/** Offers the next recoverable draft, if any. */
+function offerNextDraft() {
+  const next = offered[0];
+  $("recovery").hidden = !next;
+  if (next) $("recovery-text").textContent = draftMessage(next);
+}
+
+async function findDrafts() {
+  const all = await drafts.list();
+  const { offer, expired } = draftsToOffer(all, await heldLocks());
+  for (const d of expired) drafts.remove(d.id);
+  offered = offer.filter((d) => !draft || d.id !== draft.id);
+  offerNextDraft();
+}
+
+function recoverDraft() {
+  const chosen = offered.shift();
+  offerNextDraft();
+  if (!chosen || !confirmDiscard()) return;
+  return run(`Recovering ${chosen.name}…`, async () => {
+    const info = await openDocument(chosen.data, chosen.name);
+    setCurrent(info, { draftId: chosen.id });
+    current.unsaved = true;
+    showNotice(`“${chosen.name}” was recovered from its draft. Save it to keep the changes.`, "warning");
+  });
+}
+
+function discardDraft() {
+  const chosen = offered.shift();
+  if (chosen) drafts.remove(chosen.id);
+  offerNextDraft();
+}
+
+/** The server no longer has the open document: reopen it from its draft. */
+async function documentLost() {
+  if (!current || busy) return;
+  const saved = draft ? await drafts.get(draft.id) : null;
+  if (!saved) {
+    showNotice(`“${current.name}” is no longer open in the editor server (it was probably restarted), and there is no local draft of it. Open the file again.`);
+    return;
+  }
+  const lostId = current.id;
+  await run(`Reopening ${saved.name}…`, async () => {
+    const info = await openDocument(saved.data, saved.name);
+    if (!current || current.id !== lostId) return;
+    const { handle } = current;
+    setCurrent(info, { handle, draftId: saved.id, closePrevious: false });
+    current.unsaved = true;
+    const time = new Date(saved.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    showNotice(`The editor server was restarted, so “${saved.name}” was reopened from its draft saved at ${time}. Changes made in the last seconds before that may be missing.`, "warning");
+  });
+}
 
 function $(id) {
   return document.getElementById(id);
@@ -144,12 +242,20 @@ function confirmDiscard() {
   return window.confirm(`“${current.name}” has unsaved changes. Discard them?`);
 }
 
-/** Replaces the open document, closing the previous one on the server. */
-function setCurrent(info, { handle = null, isNew = false } = {}) {
+/**
+ * Replaces the open document, closing the previous one on the server (its
+ * unsaved changes were discarded, so its draft is deleted). `draftId`
+ * continues an existing draft (recovery).
+ */
+function setCurrent(info, { handle = null, isNew = false, draftId = null, closePrevious = true } = {}) {
   const previous = current;
+  if (!draftId || !draft || draft.id !== draftId) {
+    endDraft(true);
+    startDraft(draftId || undefined);
+  }
   current = { id: info.id, name: info.name, model: info.model, handle, savedAt: null, isNew, unsaved: false };
   editor.load(info);
-  if (previous) closeDocument(previous.id).catch(() => {});
+  if (previous && closePrevious) closeDocument(previous.id).catch(() => {});
 }
 
 function createNew() {
@@ -201,7 +307,11 @@ async function save() {
   return run("Saving…", async () => {
     const blob = await downloadDocument(current.id);
     if (current.handle) {
-      await writeToHandle(current.handle, blob);
+      try {
+        await writeToHandle(current.handle, blob);
+      } catch (err) {
+        throw new Error(saveErrorMessage(err, current.name));
+      }
     } else {
       downloadBlob(blob, current.name);
     }
@@ -232,7 +342,11 @@ async function saveAs() {
   await run("Saving…", async () => {
     const blob = await downloadDocument(current.id, name);
     if (handle) {
-      await writeToHandle(handle, blob);
+      try {
+        await writeToHandle(handle, blob);
+      } catch (err) {
+        throw new Error(saveErrorMessage(err, name));
+      }
       current.handle = handle;
     } else {
       downloadBlob(blob, name);
@@ -246,6 +360,11 @@ function markSaved() {
   current.savedAt = new Date();
   current.isNew = false;
   current.unsaved = editor.hasPendingChanges();
+  // The file on disk now has the changes: the draft is no longer needed.
+  if (draft && !current.unsaved) {
+    clearTimeout(draft.timer);
+    drafts.remove(draft.id);
+  }
 }
 
 function focusEditor() {
@@ -270,6 +389,8 @@ function bindToolbar() {
     if (action) button.addEventListener("click", () => action());
   }
   $("notice-close").addEventListener("click", hideNotice);
+  $("recovery-open").addEventListener("click", () => recoverDraft());
+  $("recovery-discard").addEventListener("click", discardDraft);
 }
 
 function bindShortcuts() {
@@ -337,12 +458,16 @@ function bindEditor() {
       current.unsaved = true;
       renderDocument();
       findBar.refresh();
+      scheduleDraft();
     },
     onError(message) {
       showNotice(message);
     },
     onInfo(message) {
       showNotice(message, "warning");
+    },
+    onLost() {
+      documentLost();
     },
     onCommand(name) {
       toolbar.command(name);
@@ -394,7 +519,22 @@ function init() {
   bindShortcuts();
   bindDragAndDrop();
   renderDocument();
-  const monitor = createConnectionMonitor({ check: getHealth, onChange: renderConnection });
+  let wasOffline = false;
+  const monitor = createConnectionMonitor({
+    check: getHealth,
+    onChange(status) {
+      renderConnection(status);
+      // Back after an outage: check that the server still has the document.
+      if (status.state === "connected" && wasOffline && current) {
+        getDocument(current.id).catch((err) => {
+          if (err && err.code === "not_found") documentLost();
+        });
+        editor.flush().catch(() => {});
+      }
+      wasOffline = status.state === "offline";
+    },
+  });
+  findDrafts();
   monitor.checkNow();
   // Re-check straight away when the window regains focus (e.g. after the
   // server was restarted), instead of waiting for the next poll.

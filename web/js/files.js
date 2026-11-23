@@ -80,6 +80,25 @@ export async function writeToHandle(handle, blob) {
   await writable.close();
 }
 
+/** A readable explanation of why writing `name` failed. */
+export function saveErrorMessage(err, name) {
+  switch (err && err.name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return `Permission to write to “${name}” was not given. Use Save as… to choose where to save it.`;
+    case "NoModificationAllowedError":
+    case "InvalidStateError":
+    case "InvalidModificationError":
+      return `“${name}” couldn't be written: it may be open in another program (such as Word) or read-only. Close it there, or use Save as… to save a copy.`;
+    case "QuotaExceededError":
+      return `“${name}” couldn't be written because the disk is full.`;
+    case "NotFoundError":
+      return `“${name}” no longer exists where it was opened from. Use Save as… to choose where to save it.`;
+    default:
+      return `“${name}” couldn't be saved: ${(err && err.message) || err}`;
+  }
+}
+
 /** Saves a blob through the browser's download mechanism. */
 export function downloadBlob(blob, name, doc = globalThis.document, url = globalThis.URL) {
   const href = url.createObjectURL(blob);

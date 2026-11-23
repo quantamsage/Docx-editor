@@ -82,8 +82,10 @@ function cdpClient(url) {
   const socket = new WebSocket(url);
   let nextId = 1;
   const pending = new Map();
+  const listeners = new Map();
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
+    if (message.method && listeners.has(message.method)) listeners.get(message.method)(message.params);
     if (message.id && pending.has(message.id)) {
       const { resolve, reject } = pending.get(message.id);
       pending.delete(message.id);
@@ -102,6 +104,8 @@ function cdpClient(url) {
       socket.send(JSON.stringify({ id, method, params }));
       return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
     },
+    /** Calls `fn` with the parameters of each `method` event. */
+    on: (method, fn) => listeners.set(method, fn),
     close: () => socket.close(),
   };
 }
@@ -599,6 +603,66 @@ async function main() {
       return res.ok ? (await res.arrayBuffer()).byteLength : -res.status;
     })()`);
     check(size > 20000, `saved document is returned (${size} bytes)`);
+
+    // Draft recovery: an edited document is kept as a local draft.
+    const draftCount = () =>
+      evaluate(`new Promise((resolve) => {
+        const open = indexedDB.open("docx-editor-drafts", 1);
+        open.onupgradeneeded = () => open.result.createObjectStore("drafts", { keyPath: "id" });
+        open.onsuccess = () => {
+          const all = open.result.transaction("drafts").objectStore("drafts").getAll();
+          all.onsuccess = () => { resolve(all.result.map((d) => d.name + ":" + d.data.size).join(",")); open.result.close(); };
+        };
+        open.onerror = () => resolve("error");
+      })`);
+    const titleBlock = await evaluate(`Number(document.querySelector("#doc-content .para-title").dataset.block)`);
+    await caretAt(titleBlock, 0);
+    await type("Draft check ");
+    check(await waitFor(`fetch("/api/documents/2").then((r) => r.json()).then((d) => JSON.stringify(d.model.blocks[${titleBlock}]).includes("Draft check"))`), "the edit reaches the server");
+    const drafted = await (async () => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        if ((await draftCount()).startsWith("word-sample.docx:")) return true;
+        await sleep(250);
+      }
+      return false;
+    })();
+    check(drafted, `a draft of the edited document is stored (${await draftCount()})`);
+
+    // The server loses the document (as after a restart): it is reopened from the draft.
+    await evaluate(`fetch("/api/documents/2", { method: "DELETE" })`);
+    await caretAt(titleBlock, 0);
+    await type("x");
+    check(await waitFor(`document.getElementById("notice-text").textContent.includes("reopened from its draft")`), "a document the server lost is reopened from its draft");
+    const reopenedId = await evaluate(`fetch("/api/documents/3").then((r) => r.ok ? 3 : 0)`);
+    check(reopenedId === 3 && (await text("document-name")) === "word-sample.docx", "the draft is open under the same name");
+    check(await waitFor(`fetch("/api/documents/3").then((r) => r.json()).then((d) => JSON.stringify(d.model.blocks).includes("Draft check"))`), "the reopened document has the earlier edits");
+
+    // A crash or closed tab: after reloading, the draft is offered and recovered.
+    await cdp.send("Page.enable");
+    cdp.on("Page.javascriptDialogOpening", () => cdp.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => {}));
+    await sleep(2500); // let the draft catch up
+    await cdp.send("Page.reload", { ignoreCache: true });
+    check(await waitFor(`document.getElementById("status-connection")?.dataset.state === "connected" && !document.getElementById("recovery").hidden`, 15000), "after a restart, recovery of the draft is offered");
+    check((await text("recovery-text")).includes("word-sample.docx"), "the offer names the document");
+    await evaluate(`document.getElementById("recovery-open").click()`);
+    check(await waitFor(`document.getElementById("document-name").textContent === "word-sample.docx" && document.getElementById("save-state").textContent === "Unsaved changes"`), "Recover opens the draft with unsaved changes");
+    check(await waitFor(`document.getElementById("doc-content").textContent.includes("Draft check")`), "the recovered document has the edits");
+
+    // The server can't be reached for a while: typing is kept and sent later.
+    const recoveredId = await evaluate(`fetch("/api/documents/4").then((r) => (r.ok ? 4 : 0))`);
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    const recoveredTitle = await evaluate(`Number(document.querySelector("#doc-content .para-title").dataset.block)`);
+    await caretAt(recoveredTitle, 0);
+    await type("Offline ");
+    check(await waitFor(`document.getElementById("notice-text").textContent.includes("can't be reached")`), "typing while the server is unreachable is kept, with a notice");
+    check((await evaluate(`document.querySelector("#doc-content .para-title").textContent`)).startsWith("Offline "), "the typed text stays on the page");
+    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    check(
+      recoveredId === 4 && (await waitFor(`fetch("/api/documents/4").then((r) => r.json()).then((d) => JSON.stringify(d.model.blocks).includes("Offline Draft check"))`, 15000)),
+      "the kept typing is sent when the server is reachable again",
+    );
 
     cdp.close();
   } finally {

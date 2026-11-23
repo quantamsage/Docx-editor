@@ -433,3 +433,5 @@ body {
 .find-close { margin-left: auto; }
 ::highlight(find-matches) { background-color: #fff1a8; }
 ::highlight(find-current) { background-color: #ff9632; }
+.notice-recovery { background: #e8f1fb; color: var(--text); border-bottom-color: #c7dcf3; flex-wrap: wrap; }
+.notice-recovery .button { padding: 0.25rem 0.8rem; }

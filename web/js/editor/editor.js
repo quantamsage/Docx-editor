@@ -44,6 +44,11 @@ export const TYPING_GROUP_MS = 5000;
 
 const BLOCKED_INPUT = new Set(["historyUndo", "historyRedo", "insertFromDrop", "deleteByDrag", "insertLink", "insertOrderedList", "insertUnorderedList", "insertHorizontalRule"]);
 
+/** Errors that mean the server could not be reached (the edit may be retried). */
+const OFFLINE = new Set(["network", "timeout"]);
+/** How long to wait before resending typing after the server was unreachable. */
+export const RETRY_MS = 3000;
+
 /** "key#block" for the dirty set. */
 const dirtyId = (key, block) => `${key}#${block}`;
 
@@ -54,9 +59,10 @@ const dirtyId = (key, block) => `${key}#${block}`;
  * @param {(message: string) => void} hooks.onError  When an edit could not be applied.
  * @param {(message: string) => void} [hooks.onInfo]  Short informational messages.
  * @param {(name: string) => void} [hooks.onCommand]  A formatting command the browser raised (e.g. "bold").
+ * @param {() => void} [hooks.onLost]  The server no longer has the document (e.g. it was restarted).
  * @param {{header?: HTMLElement, footer?: HTMLElement}} [regions]  Editing hosts for the header and footer.
  */
-export function createEditor(root, { onChange, onError, onInfo = () => {}, onCommand = () => {} }, regions = {}) {
+export function createEditor(root, { onChange, onError, onInfo = () => {}, onCommand = () => {}, onLost = () => {} }, regions = {}) {
   /** @type {{id: number, revision: number, model: object}|null} */
   let doc = null;
   const dirty = new Set();
@@ -144,6 +150,10 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       onChange(doc);
       onError(`Your last change could not be applied: ${message} The document was reloaded.`);
     } catch (reloadErr) {
+      if (reloadErr && reloadErr.code === "not_found") {
+        onLost();
+        return;
+      }
       onError(`Your last change could not be applied: ${message} ${reloadErr.message || ""}`.trim());
     }
   }
@@ -173,7 +183,14 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     const sentIds = sent.map(([key, b]) => dirtyId(key, b)).join(",");
     const now = Date.now();
     if (sentIds !== typing.ids || now - typing.since > TYPING_GROUP_MS) typing = { group: typing.group + 1, ids: sentIds, since: now };
-    const result = await applyEdits(doc.id, doc.revision, edits, { group: `typing-${typing.group}` });
+    let result;
+    try {
+      result = await applyEdits(doc.id, doc.revision, edits, { group: `typing-${typing.group}` });
+    } catch (err) {
+      // Unreachable server: the text is still on the page; send it again later.
+      if (err && OFFLINE.has(err.code)) for (const id of ids) dirty.add(id);
+      throw err;
+    }
     accept(result);
     // The page may have changed while the request was out; keep it as it
     // is and point its runs at the new model's indices.
@@ -209,12 +226,26 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     timer = setTimeout(() => sync().catch(() => {}), SYNC_DELAY_MS);
   }
 
+  let offlineNotified = false;
+
   /** Sends pending changes now. Resolves when the server has them. */
   function sync() {
-    return enqueue(doSync).catch(async (err) => {
-      await recover(err);
-      throw err;
-    });
+    return enqueue(doSync).then(
+      () => {
+        offlineNotified = false;
+      },
+      async (err) => {
+        if (err && OFFLINE.has(err.code)) {
+          if (!offlineNotified) onError("The local editor server can't be reached. Your typing is kept on the page and will be sent when it is back.");
+          offlineNotified = true;
+          clearTimeout(timer);
+          timer = setTimeout(() => sync().catch(() => {}), RETRY_MS);
+          throw err;
+        }
+        await recover(err);
+        throw err;
+      },
+    );
   }
 
   // ----- Structural edits -----

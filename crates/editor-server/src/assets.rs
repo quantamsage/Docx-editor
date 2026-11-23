@@ -30,6 +30,7 @@ pub static STATIC_ASSETS: &[Asset] = &[
     asset!("js/api.js", "text/javascript; charset=utf-8"),
     asset!("js/status.js", "text/javascript; charset=utf-8"),
     asset!("js/documents.js", "text/javascript; charset=utf-8"),
+    asset!("js/drafts.js", "text/javascript; charset=utf-8"),
     asset!("js/files.js", "text/javascript; charset=utf-8"),
     asset!("js/layout.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/containers.js", "text/javascript; charset=utf-8"),
