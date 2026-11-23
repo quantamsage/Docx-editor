@@ -560,6 +560,8 @@ async function main() {
     check(await evaluate(`!window.CSS?.highlights || CSS.highlights.get("find-matches")?.size === ${paragraphs}`), "matches are highlighted");
     await press("Enter", "Enter", 13);
     check(await waitFor(`document.getElementById("find-count").textContent === "2 of ${paragraphs}"`), "Enter moves to the next match");
+    await shot("find-bar");
+    await shot("find-bar-narrow", 420, 860);
     await evaluate(`(() => { document.getElementById("find-word").checked = true; document.getElementById("find-word").dispatchEvent(new Event("change")); })()`);
     await evaluate(`(() => { const r = document.getElementById("replace-input"); r.value = "section"; document.querySelector('[data-find="replace-all"]').click(); })()`);
     check(await waitForCount("paragraph", 0), "Replace all replaces every match");
@@ -645,6 +647,8 @@ async function main() {
     await cdp.send("Page.reload", { ignoreCache: true });
     check(await waitFor(`document.getElementById("status-connection")?.dataset.state === "connected" && !document.getElementById("recovery").hidden`, 15000), "after a restart, recovery of the draft is offered");
     check((await text("recovery-text")).includes("word-sample.docx"), "the offer names the document");
+    await shot("recovery-offer");
+    await shot("recovery-offer-narrow", 420, 860);
     await evaluate(`document.getElementById("recovery-open").click()`);
     check(await waitFor(`document.getElementById("document-name").textContent === "word-sample.docx" && document.getElementById("save-state").textContent === "Unsaved changes"`), "Recover opens the draft with unsaved changes");
     check(await waitFor(`document.getElementById("doc-content").textContent.includes("Draft check")`), "the recovered document has the edits");

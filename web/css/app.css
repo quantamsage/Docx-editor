@@ -426,9 +426,11 @@ body {
 /* Find and replace (Phase 6) */
 .findbar { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.35rem 0.75rem; background: #fffbe6; border-bottom: 1px solid var(--chrome-border); }
 .findbar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
-.find-input { font: inherit; width: 16rem; max-width: 100%; padding: 0.2rem 0.4rem; border: 1px solid var(--chrome-border); border-radius: 3px; }
+.find-main { display: flex; align-items: center; gap: 0.35rem; flex: 0 1 26rem; min-width: 0; }
+.find-main .find-input { flex: 1 1 auto; }
+.find-input { font: inherit; flex: 0 1 16rem; min-width: 5rem; padding: 0.2rem 0.4rem; border: 1px solid var(--chrome-border); border-radius: 3px; }
 .find-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
-.find-count { min-width: 5.5rem; color: var(--muted); font-size: 0.85rem; }
+.find-count { min-width: 4.5rem; color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
 .find-option { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.85rem; margin-left: 0.35rem; }
 .find-close { margin-left: auto; }
 ::highlight(find-matches) { background-color: #fff1a8; }
