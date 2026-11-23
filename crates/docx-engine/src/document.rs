@@ -203,6 +203,11 @@ impl Document {
     /// back exactly as read; otherwise only edited parts are re-serialized.
     /// Pictures that were inserted and later deleted again are left out,
     /// with their relationships.
+    ///
+    /// An edited document is checked before it is returned: the archive is
+    /// read back, it must open as a Word document, and every rewritten XML
+    /// part must parse. If not, an error is returned instead of a file Word
+    /// might not open.
     pub fn save(&self) -> Result<Vec<u8>> {
         if !self.is_modified() {
             return self.package.write();
@@ -255,7 +260,9 @@ impl Document {
                 replacements.push((name.as_str(), data.as_slice()));
             }
         }
-        self.package.write_with(&replacements)
+        let bytes = self.package.write_with(&replacements)?;
+        verify_saved(&bytes, replacements.iter().map(|(name, _)| *name))?;
+        Ok(bytes)
     }
 
     /// Whether the document has unsaved edits since it was opened.
@@ -1428,6 +1435,23 @@ fn splice_in(
     Ok(())
 }
 
+/// Reads a just-written archive back: it must open as a document and the
+/// rewritten XML parts must be well formed.
+fn verify_saved<'a>(bytes: &[u8], rewritten: impl Iterator<Item = &'a str>) -> Result<()> {
+    let fail =
+        |what: String| DocxError::Write(format!("the saved file did not pass its check ({what}); nothing was written"));
+    let reopened = Document::open(bytes).map_err(|e| fail(e.to_string()))?;
+    for name in rewritten {
+        let Some(part) = reopened.package.part(name) else {
+            return Err(fail(format!("{name} is missing")));
+        };
+        if name.ends_with(".xml") || name.ends_with(".rels") {
+            XmlDocument::parse(&part.data).map_err(|e| fail(format!("{name}: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
 /// Where to insert a new block so that it becomes block `at`: before the
 /// current block `at`, or at the end (before the body's final section
 /// properties).
@@ -1666,5 +1690,22 @@ mod tests {
         assert_eq!(source_of_rels("_rels/.rels").as_deref(), Some(""));
         assert_eq!(part_dir("word/document.xml"), "word/");
         assert_eq!(part_dir("document.xml"), "");
+    }
+
+    #[test]
+    fn saved_files_are_checked_before_they_are_returned() {
+        let good = Document::new_blank().save().unwrap();
+        assert!(verify_saved(&good, ["word/document.xml"].into_iter()).is_ok());
+
+        let not_a_docx = verify_saved(b"PK broken", std::iter::empty()).unwrap_err();
+        assert!(matches!(&not_a_docx, DocxError::Write(m) if m.contains("did not pass its check")), "{not_a_docx}");
+        let missing = verify_saved(&good, ["word/footer9.xml"].into_iter()).unwrap_err();
+        assert!(missing.to_string().contains("word/footer9.xml is missing"), "{missing}");
+
+        let mut package = Package::read(&good, Limits::default()).unwrap();
+        package.set_part("word/styles.xml", b"<w:styles><unclosed></w:styles>".to_vec());
+        let broken = package.write().unwrap();
+        let err = verify_saved(&broken, ["word/styles.xml"].into_iter()).unwrap_err();
+        assert!(err.to_string().contains("word/styles.xml"), "{err}");
     }
 }
