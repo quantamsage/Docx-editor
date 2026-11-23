@@ -375,6 +375,34 @@ async function main() {
     check(await waitForModel(1, (m) => pageBreaks(m) === 2, "ctrl+enter"), "Ctrl+Enter inserts a page break");
     check(await waitFor(`document.querySelectorAll("#doc-content .obj-page_break").length === 2`), "page breaks are shown");
 
+    // Undo and redo: keyboard shortcuts and toolbar buttons.
+    const ctrl = async (key, code, keyCode, shift = false) => {
+      const modifiers = shift ? 10 : 2;
+      await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key, code, windowsVirtualKeyCode: keyCode, modifiers });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: keyCode, modifiers });
+    };
+    check(await waitFor(`!document.querySelector('[data-action="undo"]').disabled`), "Undo is enabled after edits");
+    await ctrl("z", "KeyZ", 90);
+    check(await waitForModel(1, (m) => pageBreaks(m) === 1, "undo"), "Ctrl+Z undoes the last page break");
+    check(await waitFor(`!document.querySelector('[data-action="redo"]').disabled`), "Redo is enabled after undoing");
+    await ctrl("y", "KeyY", 89);
+    check(await waitForModel(1, (m) => pageBreaks(m) === 2, "redo"), "Ctrl+Y redoes it");
+    await evaluate(`document.querySelector('[data-action="undo"]').click()`);
+    check(await waitForModel(1, (m) => pageBreaks(m) === 1, "undo button"), "the Undo button undoes");
+    await evaluate(`document.querySelector('[data-action="redo"]').click()`);
+    check(await waitForModel(1, (m) => pageBreaks(m) === 2, "redo button"), "the Redo button redoes");
+    const lastBlock = await evaluate(`document.querySelectorAll("#doc-content > [data-block]").length - 1`);
+    const textOf = (m, b) => (m.blocks[b].inlines || []).flatMap((i) => i.content || []).map((c) => c.text || "").join("");
+    const original = textOf(await serverModel(1), lastBlock);
+    await caretAt(lastBlock, 0);
+    await type("Typed then undone ");
+    check(await waitForModel(1, (m) => textOf(m, lastBlock) === `Typed then undone ${original}`, "typed"), "typing reaches the document");
+    await ctrl("z", "KeyZ", 90);
+    check(await waitForModel(1, (m) => textOf(m, lastBlock) === original, "undo typing"), "Ctrl+Z undoes the typing in one step");
+    check(await waitFor(`document.querySelector('#doc-content > [data-block="${lastBlock}"]').textContent === ${JSON.stringify(original)}`), "the page shows the undone text");
+    await ctrl("z", "KeyZ", 90, true);
+    check(await waitForModel(1, (m) => textOf(m, lastBlock) === `Typed then undone ${original}`, "redo typing"), "Ctrl+Shift+Z redoes it");
+
     const shot = async (name, width = 1280, height = 900) => {
       if (!process.env.SCREENSHOT_DIR) return;
       await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 600 });

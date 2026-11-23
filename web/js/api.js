@@ -156,14 +156,32 @@ export async function closeDocument(id, options = {}) {
 /**
  * Applies edits to a document atomically. `baseRevision` is the revision
  * the edits' positions refer to; the server refuses edits based on an
- * outdated revision (code "stale_revision").
+ * outdated revision (code "stale_revision"). Consecutive batches with the
+ * same `group` (e.g. typing in one paragraph) are undone together.
  * @returns {Promise<DocumentInfo>} The updated document.
  */
-export function applyEdits(id, baseRevision, edits, options = {}) {
+export function applyEdits(id, baseRevision, edits, { group, ...options } = {}) {
+  const body = { base_revision: baseRevision, edits };
+  if (group) body.group = group;
   return request(`/api/documents/${encodeURIComponent(id)}/edits`, {
     ...options,
     method: "POST",
-    body: { base_revision: baseRevision, edits },
+    body,
+    timeoutMs: DOCUMENT_TIMEOUT_MS,
+  });
+}
+
+/**
+ * Undoes (`step` "undo") or redoes ("redo") the last edit batch. Fails with
+ * code "nothing_to_undo"/"nothing_to_redo" when there is none.
+ * @returns {Promise<DocumentInfo>}
+ */
+export function stepHistory(id, baseRevision, step, options = {}) {
+  if (step !== "undo" && step !== "redo") return Promise.reject(new ApiError(`Unknown history step ${step}`, { code: "invalid_step" }));
+  return request(`/api/documents/${encodeURIComponent(id)}/${step}`, {
+    ...options,
+    method: "POST",
+    body: { base_revision: baseRevision },
     timeoutMs: DOCUMENT_TIMEOUT_MS,
   });
 }

@@ -71,6 +71,9 @@ function renderDocument() {
   for (const action of ["new", "open"]) {
     document.querySelector(`[data-action="${action}"]`).disabled = busy;
   }
+  const doc = current && editor ? editor.document : null;
+  document.querySelector('[data-action="undo"]').disabled = busy || !doc || !doc.canUndo;
+  document.querySelector('[data-action="redo"]').disabled = busy || !doc || !doc.canRedo;
 
   $("welcome").hidden = Boolean(current);
   for (const id of ["doc-content", "doc-header", "doc-footer"]) $(id).hidden = !current;
@@ -251,7 +254,14 @@ function focusEditor() {
 // ----- Wiring -----
 
 function bindToolbar() {
-  const actions = { new: createNew, open: chooseAndOpen, save, "save-as": saveAs };
+  const actions = {
+    new: createNew,
+    open: chooseAndOpen,
+    save,
+    "save-as": saveAs,
+    undo: () => editor.undo(),
+    redo: () => editor.redo(),
+  };
   for (const button of document.querySelectorAll(".toolbar-main [data-action]")) {
     const action = actions[button.dataset.action];
     if (action) button.addEventListener("click", () => action());

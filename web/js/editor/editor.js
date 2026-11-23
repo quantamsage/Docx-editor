@@ -18,7 +18,7 @@
 //   revision they were made against. If one fails, the document is
 //   reloaded from the server and the user is told.
 
-import { ApiError, applyEdits, getDocument, mediaUrl } from "../api.js";
+import { ApiError, applyEdits, getDocument, mediaUrl, stepHistory } from "../api.js";
 import {
   LINE_BREAK,
   formatAt,
@@ -38,6 +38,8 @@ import { renderBlocks, renderHeaderFooter } from "./render.js";
 
 /** How long typing must pause before the change is sent. */
 export const SYNC_DELAY_MS = 400;
+/** Typing in one paragraph for up to this long is one undo step. */
+export const TYPING_GROUP_MS = 5000;
 
 const BLOCKED_INPUT = new Set(["historyUndo", "historyRedo", "insertFromDrop", "deleteByDrag", "insertLink", "insertOrderedList", "insertUnorderedList", "insertHorizontalRule"]);
 
@@ -61,6 +63,9 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   let chain = Promise.resolve();
   let structuralPending = false;
   let composing = false;
+  // Undo groups for typing: a new group starts after any other edit, an
+  // undo or redo, typing in another paragraph, or a long run of typing.
+  let typing = { group: 0, ids: "", since: 0 };
   const hosts = [root, regions.header, regions.footer].filter(Boolean);
 
   /** The editing host holding a container's paragraphs. */
@@ -102,7 +107,7 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     clearTimeout(timer);
     dirty.clear();
     replayQueue.length = 0;
-    doc = { id: info.id, revision: info.revision || 0, model: info.model };
+    doc = { id: info.id, revision: info.revision || 0, model: info.model, canUndo: Boolean(info.can_undo), canRedo: Boolean(info.can_redo) };
     root.contentEditable = "true";
     root.setAttribute("aria-label", "Document text");
     render();
@@ -164,13 +169,28 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       sent.push([key, b, pieces]);
     }
     if (!edits.length) return;
-    const result = await applyEdits(doc.id, doc.revision, edits);
-    doc.revision = result.revision;
-    doc.model = result.model;
+    const sentIds = sent.map(([key, b]) => dirtyId(key, b)).join(",");
+    const now = Date.now();
+    if (sentIds !== typing.ids || now - typing.since > TYPING_GROUP_MS) typing = { group: typing.group + 1, ids: sentIds, since: now };
+    const result = await applyEdits(doc.id, doc.revision, edits, { group: `typing-${typing.group}` });
+    accept(result);
     // The page may have changed while the request was out; keep it as it
     // is and point its runs at the new model's indices.
     for (const [key, b, pieces] of sent) relabel(blockEl(b, key), remapAfterSplice(pieces));
     onChange(doc);
+  }
+
+  /** Takes the server's answer: revision, model and undo state. */
+  function accept(result) {
+    doc.revision = result.revision;
+    doc.model = result.model;
+    doc.canUndo = Boolean(result.can_undo);
+    doc.canRedo = Boolean(result.can_redo);
+  }
+
+  /** The next typing starts a new undo step. */
+  function endTypingGroup() {
+    typing = { group: typing.group + 1, ids: "", since: 0 };
   }
 
   function relabel(el, map) {
@@ -224,9 +244,9 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       await doSync();
       const built = plan();
       if (!built || !built.edits.length) return;
+      endTypingGroup();
       const result = await applyEdits(doc.id, doc.revision, built.edits);
-      doc.revision = result.revision;
-      doc.model = result.model;
+      accept(result);
       render();
       if (built.after) built.after();
       onChange(doc);
@@ -504,6 +524,43 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     });
   }
 
+  /**
+   * Undoes (`step` "undo") or redoes ("redo") the last change. Pending
+   * typing is sent first (so it is what gets undone); the cursor stays where
+   * it was if that place still exists.
+   */
+  function history(step) {
+    if (!doc) return Promise.resolve();
+    structuralPending = true;
+    const caret = selectionInfo(hosts);
+    const task = enqueue(async () => {
+      await doSync();
+      if (step === "undo" ? !doc.canUndo : !doc.canRedo) {
+        onInfo(step === "undo" ? "There is nothing to undo." : "There is nothing to redo.");
+        return;
+      }
+      endTypingGroup();
+      const result = await stepHistory(doc.id, doc.revision, step);
+      accept(result);
+      render();
+      if (caret && caret.start.editable) placeCaret(caret.start.block, caret.start.offset, caret.start.container);
+      onChange(doc);
+    });
+    return task
+      .catch((err) => {
+        replayQueue.length = 0;
+        if (err && (err.code === "nothing_to_undo" || err.code === "nothing_to_redo")) {
+          onInfo(err.message);
+          return undefined;
+        }
+        return recover(err);
+      })
+      .finally(() => {
+        structuralPending = false;
+        drainReplayQueue();
+      });
+  }
+
   /** Applies document-level edits (page setup, headers, footers, page numbers). */
   function applyDocumentEdits(edits, after) {
     return runEdit(() => ({ edits, after }));
@@ -538,7 +595,7 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
    */
   function handleInput(type, data) {
     if (type.startsWith("format") || BLOCKED_INPUT.has(type)) {
-      if (type === "historyUndo" || type === "historyRedo") onInfo("Undo and redo are not available yet.");
+      if (type === "historyUndo" || type === "historyRedo") history(type === "historyUndo" ? "undo" : "redo");
       const command = { formatBold: { bold: true }, formatItalic: { italic: true }, formatUnderline: { underline: true }, formatStrikeThrough: { strike: true } }[type];
       if (command) onCommand(Object.keys(command)[0]);
       return true;
@@ -648,9 +705,11 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   function onKeyDown(event) {
     if (!doc) return;
     const mod = event.ctrlKey || event.metaKey;
-    if (mod && !event.altKey && ["z", "y"].includes(event.key.toLowerCase())) {
+    const key = event.key.toLowerCase();
+    if (mod && !event.altKey && (key === "z" || key === "y")) {
+      // Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo.
       event.preventDefault();
-      onInfo("Undo and redo are not available yet.");
+      history(key === "z" && !event.shiftKey ? "undo" : "redo");
       return;
     }
     if (mod && !event.altKey && !event.shiftKey && event.key === "Enter") {
@@ -707,6 +766,8 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     insertTable,
     tableCommand,
     applyDocumentEdits,
+    undo: () => history("undo"),
+    redo: () => history("redo"),
     placeCaret,
     /** The editing hosts (body, header, footer). */
     hosts,

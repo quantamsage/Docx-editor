@@ -12,6 +12,8 @@ import {
   newDocument,
   openDocument,
   request,
+  stepHistory,
+  uploadImage,
 } from "../../web/js/api.js";
 
 /** Builds a fake fetch that records calls and returns the given response. */
@@ -178,4 +180,33 @@ test("applyEdits surfaces stale revisions", async () => {
 test("mediaUrl encodes each part segment", () => {
   assert.equal(mediaUrl(2, "word/media/image 1.png"), "/api/documents/2/media/word/media/image%201.png");
   assert.equal(mediaUrl(2, "word/media/a#b.png"), "/api/documents/2/media/word/media/a%23b.png");
+});
+
+test("applyEdits sends the undo group when there is one", async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(200, { id: 3, revision: 5, model: { blocks: [] } }));
+  await applyEdits(3, 4, [], { fetchImpl, group: "typing-2" });
+  assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), { base_revision: 4, edits: [], group: "typing-2" });
+});
+
+test("stepHistory posts undo and redo with the base revision", async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(200, { id: 3, revision: 6, can_undo: false, can_redo: true, model: { blocks: [] } }));
+  const result = await stepHistory(3, 5, "undo", { fetchImpl });
+  assert.equal(result.can_redo, true);
+  assert.equal(fetchImpl.calls[0].url, "/api/documents/3/undo");
+  assert.deepEqual(JSON.parse(fetchImpl.calls[0].init.body), { base_revision: 5 });
+  await stepHistory(3, 6, "redo", { fetchImpl });
+  assert.equal(fetchImpl.calls[1].url, "/api/documents/3/redo");
+  await assert.rejects(stepHistory(3, 6, "rm", { fetchImpl }), (err) => err.code === "invalid_step");
+  const none = fakeFetch(() => jsonResponse(409, { error: { code: "nothing_to_undo", message: "There is nothing to undo." } }));
+  await assert.rejects(stepHistory(3, 6, "undo", { fetchImpl: none }), (err) => err.code === "nothing_to_undo");
+});
+
+test("uploadImage sends the picture's bytes", async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(201, { id: "img1", format: "png", width_px: 2, height_px: 1 }));
+  const file = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+  const info = await uploadImage(7, file, { fetchImpl });
+  assert.equal(info.id, "img1");
+  assert.equal(fetchImpl.calls[0].url, "/api/documents/7/images");
+  assert.equal(fetchImpl.calls[0].init.headers["Content-Type"], "application/octet-stream");
+  assert.equal(fetchImpl.calls[0].init.body, file);
 });
