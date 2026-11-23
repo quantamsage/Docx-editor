@@ -9,7 +9,10 @@
 //!
 //! Operations, applied in order:
 //! `--text <block> <text>`, `--insert <block> <text>`, `--delete <block>`,
-//! `--style <block> <styleId>`, `--align <block> left|center|right|justify`.
+//! `--style <block> <styleId>`, `--align <block> left|center|right|justify`,
+//! `--stage <picture>` (stages a picture for insertion; the first is `img1`)
+//! and `--json <edits.json>` (applies a JSON array of edits, as the editor
+//! sends them).
 //! With no operations, `edit` re-saves the file unchanged.
 
 use std::process::ExitCode;
@@ -116,6 +119,18 @@ fn apply(doc: &mut Document, mut ops: &[String]) -> Result<(), String> {
                 };
                 doc.set_paragraph_alignment(index(block)?, Some(alignment)).map_err(|e| e.to_string())?;
                 3
+            }
+            [op, path, ..] if op == "--stage" => {
+                let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+                let info = doc.stage_image(bytes).map_err(|e| e.to_string())?;
+                println!("staged {path} as {} ({}x{} px)", info.id, info.width_px, info.height_px);
+                2
+            }
+            [op, path, ..] if op == "--json" => {
+                let json = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+                let edits: Vec<docx_engine::Edit> = serde_json::from_str(&json).map_err(|e| format!("{path}: {e}"))?;
+                doc.apply(&edits).map_err(|e| e.to_string())?;
+                2
             }
             [op, ..] => return Err(format!("unknown or incomplete operation '{op}'")),
             [] => unreachable!(),
