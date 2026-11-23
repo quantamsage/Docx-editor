@@ -65,6 +65,27 @@ pub struct Document {
     next_image: u32,
 }
 
+/// The document's edited state in serialized form, for undo and redo (see
+/// [`crate::history::History`]). Much smaller than a copy of the parsed
+/// trees: edited parts are kept as their XML text, added pictures are
+/// shared.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    /// The main part's XML, or `None` while it is unedited.
+    main: Option<Vec<u8>>,
+    edited: Vec<(String, Vec<u8>)>,
+    added: BTreeMap<String, Arc<Vec<u8>>>,
+    rels: Vec<Relationship>,
+    styles: Vec<crate::model::Style>,
+}
+
+impl Snapshot {
+    /// Approximate memory used, in bytes (shared pictures not counted).
+    pub fn size(&self) -> usize {
+        self.main.as_ref().map_or(0, Vec::len) + self.edited.iter().map(|(n, d)| n.len() + d.len()).sum::<usize>()
+    }
+}
+
 /// The state edits change, for rolling back a failed batch.
 struct Checkpoint {
     xml: XmlDocument,
@@ -537,6 +558,40 @@ impl Document {
         self.added = saved.added;
         self.rels = saved.rels;
         self.styles = saved.styles;
+    }
+
+    /// The current state, to return to it later with [`Document::restore`].
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            main: self.modified.then(|| self.xml.to_bytes()),
+            edited: self.edited.iter().map(|(name, doc)| (name.clone(), doc.to_bytes())).collect(),
+            added: self.added.clone(),
+            rels: self.rels.clone(),
+            styles: self.styles.clone(),
+        }
+    }
+
+    /// Returns to a state taken with [`Document::snapshot`]. Staged pictures
+    /// are kept. On error the document is unchanged.
+    pub fn restore(&mut self, snapshot: &Snapshot) -> Result<()> {
+        let xml = match &snapshot.main {
+            Some(bytes) => parse_part(&self.main_part, bytes)?,
+            None => {
+                let part = self.package.part(&self.main_part).expect("checked when the document was opened");
+                parse_part(&self.main_part, &part.data)?
+            }
+        };
+        let mut edited = BTreeMap::new();
+        for (name, bytes) in &snapshot.edited {
+            edited.insert(name.clone(), parse_part(name, bytes)?);
+        }
+        self.xml = xml;
+        self.modified = snapshot.main.is_some();
+        self.edited = edited;
+        self.added = snapshot.added.clone();
+        self.rels = snapshot.rels.clone();
+        self.styles = snapshot.styles.clone();
+        Ok(())
     }
 
     /// Runs one edit; on error the document is left unchanged.

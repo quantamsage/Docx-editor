@@ -19,6 +19,7 @@ mod document;
 pub mod edit;
 pub mod error;
 pub mod format;
+pub mod history;
 pub mod media;
 pub mod model;
 pub mod numbering;
@@ -29,7 +30,7 @@ mod read;
 pub mod table;
 pub mod xml;
 
-pub use document::Document;
+pub use document::{Document, Snapshot};
 pub use edit::{CellRef, Container, Edit, HeaderFooterKind, InlineRef, Piece, Splice};
 pub use error::{DocxError, Result};
 pub use model::DocumentModel;
