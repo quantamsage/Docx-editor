@@ -3,6 +3,7 @@
 //! ```text
 //! cargo run -p docx-engine --example docx_tool -- inspect <file.docx>
 //! cargo run -p docx-engine --example docx_tool -- model <file.docx>
+//! cargo run -p docx-engine --example docx_tool -- check <file.docx>
 //! cargo run -p docx-engine --example docx_tool -- edit <in.docx> <out.docx> [OPERATION]...
 //! cargo run -p docx-engine --example docx_tool -- new <out.docx> [OPERATION]...
 //! ```
@@ -62,6 +63,32 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{}", serde_json::to_string_pretty(&model).map_err(|e| e.to_string())?);
             Ok(())
         }
+        [cmd, path] if cmd == "check" => {
+            // Schema order and structure of the main document, headers and footers.
+            let doc = open(path)?;
+            let w = docx_engine::check::W_NAMESPACES;
+            let mut problems = 0;
+            for part in doc.package().parts() {
+                let name = part.name.as_str();
+                let word_xml = name.starts_with("word/")
+                    && name.ends_with(".xml")
+                    && (name == doc.main_part() || name.contains("header") || name.contains("footer"));
+                if !word_xml {
+                    continue;
+                }
+                let xml = docx_engine::xml::XmlDocument::parse(&part.data).map_err(|e| format!("{name}: {e}"))?;
+                let ns = xml.root.namespace.clone().unwrap_or_default();
+                if !w.contains(&ns.as_str()) {
+                    continue;
+                }
+                for problem in docx_engine::check::problems(&xml, &ns) {
+                    println!("{name}: {problem}");
+                    problems += 1;
+                }
+            }
+            println!("{problems} problem(s)");
+            Ok(())
+        }
         [cmd, input, output, ops @ ..] if cmd == "edit" => {
             let mut doc = open(input)?;
             apply(&mut doc, ops)?;
@@ -78,9 +105,8 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("wrote {output}");
             Ok(())
         }
-        _ => {
-            Err("usage: docx_tool inspect|model <file> | edit <in> <out> [operations] | new <out> [operations]".into())
-        }
+        _ => Err("usage: docx_tool inspect|model|check <file> | edit <in> <out> [operations] | new <out> [operations]"
+            .into()),
     }
 }
 

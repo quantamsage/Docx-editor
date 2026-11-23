@@ -76,36 +76,6 @@
       </div>
     </nav>
 
-    <nav class="toolbar toolbar-table" id="table-toolbar" aria-label="Table" hidden>
-      <span class="toolbar-title" aria-hidden="true">Table</span>
-      <div class="toolbar-group" role="group" aria-label="Rows">
-        <button type="button" class="tool" data-table="row-above" title="Insert a row above"><span class="tool-icon" aria-hidden="true">⤒</span><span class="tool-label">Row above</span></button>
-        <button type="button" class="tool" data-table="row-below" title="Insert a row below"><span class="tool-icon" aria-hidden="true">⤓</span><span class="tool-label">Row below</span></button>
-        <button type="button" class="tool" data-table="delete-row" title="Delete this row"><span class="tool-icon" aria-hidden="true">✕</span><span class="tool-label">Delete row</span></button>
-      </div>
-      <div class="toolbar-group" role="group" aria-label="Columns">
-        <button type="button" class="tool" data-table="column-left" title="Insert a column to the left"><span class="tool-icon" aria-hidden="true">⇤</span><span class="tool-label">Column left</span></button>
-        <button type="button" class="tool" data-table="column-right" title="Insert a column to the right"><span class="tool-icon" aria-hidden="true">⇥</span><span class="tool-label">Column right</span></button>
-        <button type="button" class="tool" data-table="delete-column" title="Delete this column"><span class="tool-icon" aria-hidden="true">✕</span><span class="tool-label">Delete column</span></button>
-      </div>
-      <div class="toolbar-group" role="group" aria-label="Table appearance">
-        <button type="button" class="tool" data-table="borders" aria-pressed="false" title="Show or hide the table's borders"><span class="tool-icon" aria-hidden="true">▦</span><span class="tool-label">Borders</span></button>
-        <label class="visually-hidden" for="cell-align">Cell alignment</label>
-        <select id="cell-align" class="tool-select tool-select-narrow" data-table="cell-align" title="Vertical alignment of the cell's text">
-          <option value="top">Align top</option>
-          <option value="center">Align middle</option>
-          <option value="bottom">Align bottom</option>
-        </select>
-        <label class="tool tool-square tool-color" title="Cell shading">
-          <span class="color-swatch swatch-shading" aria-hidden="true">◧</span>
-          <span class="visually-hidden">Cell shading</span>
-          <input type="color" id="cell-shading" data-table="cell-shading" value="#fff2cc">
-        </label>
-        <button type="button" class="tool" data-table="cell-shading" data-value="" title="Remove the cell's shading"><span class="tool-label">No shading</span><span class="visually-hidden">No shading</span></button>
-        <button type="button" class="tool" data-table="delete-table" title="Delete the whole table"><span class="tool-icon" aria-hidden="true">🗑</span><span class="tool-label">Delete table</span></button>
-      </div>
-    </nav>
-
     <nav class="toolbar toolbar-format" aria-label="Formatting" id="format-toolbar">
       <div class="toolbar-group" role="group" aria-label="Style">
         <label class="visually-hidden" for="style-select">Paragraph style</label>
@@ -167,6 +137,36 @@
           <option value="0,240">12 pt after</option>
           <option value="240,240">12 pt before and after</option>
         </select>
+      </div>
+    </nav>
+
+    <nav class="toolbar toolbar-table" id="table-toolbar" aria-label="Table" hidden>
+      <span class="toolbar-title" aria-hidden="true">Table</span>
+      <div class="toolbar-group" role="group" aria-label="Rows">
+        <button type="button" class="tool" data-table="row-above" title="Insert a row above"><span class="tool-icon" aria-hidden="true">⤒</span><span class="tool-label">Row above</span></button>
+        <button type="button" class="tool" data-table="row-below" title="Insert a row below"><span class="tool-icon" aria-hidden="true">⤓</span><span class="tool-label">Row below</span></button>
+        <button type="button" class="tool" data-table="delete-row" title="Delete this row"><span class="tool-icon" aria-hidden="true">✕</span><span class="tool-label">Delete row</span></button>
+      </div>
+      <div class="toolbar-group" role="group" aria-label="Columns">
+        <button type="button" class="tool" data-table="column-left" title="Insert a column to the left"><span class="tool-icon" aria-hidden="true">⇤</span><span class="tool-label">Column left</span></button>
+        <button type="button" class="tool" data-table="column-right" title="Insert a column to the right"><span class="tool-icon" aria-hidden="true">⇥</span><span class="tool-label">Column right</span></button>
+        <button type="button" class="tool" data-table="delete-column" title="Delete this column"><span class="tool-icon" aria-hidden="true">✕</span><span class="tool-label">Delete column</span></button>
+      </div>
+      <div class="toolbar-group" role="group" aria-label="Table appearance">
+        <button type="button" class="tool" data-table="borders" aria-pressed="false" title="Show or hide the table's borders"><span class="tool-icon" aria-hidden="true">▦</span><span class="tool-label">Borders</span></button>
+        <label class="visually-hidden" for="cell-align">Cell alignment</label>
+        <select id="cell-align" class="tool-select tool-select-narrow" data-table="cell-align" title="Vertical alignment of the cell's text">
+          <option value="top">Align top</option>
+          <option value="center">Align middle</option>
+          <option value="bottom">Align bottom</option>
+        </select>
+        <label class="tool tool-square tool-color" title="Cell shading">
+          <span class="color-swatch swatch-shading" aria-hidden="true">◧</span>
+          <span class="visually-hidden">Cell shading</span>
+          <input type="color" id="cell-shading" data-table="cell-shading" value="#fff2cc">
+        </label>
+        <button type="button" class="tool" data-table="cell-shading" data-value="" title="Remove the cell's shading"><span class="tool-icon" aria-hidden="true">⊘</span><span class="tool-label">No shading</span></button>
+        <button type="button" class="tool" data-table="delete-table" title="Delete the whole table"><span class="tool-icon" aria-hidden="true">🗑</span><span class="tool-label">Delete table</span></button>
       </div>
     </nav>
 

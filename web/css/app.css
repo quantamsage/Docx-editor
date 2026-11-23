@@ -197,6 +197,8 @@ body {
   .titlebar { grid-template-columns: auto 1fr; }
   .titlebar-spacer { display: none; }
   .tool-label:not(.visually-hidden) { display: none; }
+  .toolbar-group { flex-wrap: wrap; }
+  .tool-select-wide { width: 8rem; }
   .statusbar { gap: 0.75rem; }
 }
 
@@ -365,7 +367,8 @@ body {
 .obj-field { background: rgba(0, 0, 0, 0.06); border-radius: 2px; padding: 0 1px; }
 
 /* Tables: editable cells with the document's column widths. */
-.table-wrap table { table-layout: fixed; max-width: none; }
+.table-wrap { overflow-x: visible; }
+.table-wrap table { table-layout: fixed; }
 .table-wrap table.table-gridlines td { border: 1px dotted #c8c6c4; }
 .table-wrap td { overflow-wrap: break-word; }
 

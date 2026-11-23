@@ -275,7 +275,8 @@ function renderTable(table, index, ctx) {
       colgroup.appendChild(col);
     }
     el.appendChild(colgroup);
-    el.style.width = `${twipsToPx(grid.reduce((a, b) => a + b, 0))}px`;
+    // Fitted to the text width when wider (Word lets such tables run into the margin).
+    el.style.width = `min(${twipsToPx(grid.reduce((a, b) => a + b, 0))}px, 100%)`;
   }
   const { rowSpans } = tableLayout(table);
   (table.rows || []).forEach((row, r) => {

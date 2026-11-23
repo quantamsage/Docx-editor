@@ -15,6 +15,9 @@ const TR_ORDER: &[&str] = &["tblPrEx", "trPr", "tc"];
 /// Elements that may repeat in an ordered container.
 const REPEATABLE: &[&str] = &["headerReference", "footerReference", "tr", "tc"];
 
+/// The WordprocessingML namespaces (transitional and strict).
+pub const W_NAMESPACES: [&str; 2] = [crate::read::W_NS, crate::read::W_NS_STRICT];
+
 /// Problems found in a WordprocessingML part (main document, header or
 /// footer), as readable messages. Empty when the part is well-formed in
 /// the ways checked.

@@ -7,7 +7,10 @@
 //   node tests/browser/smoke.mjs <url>      # or test an already running editor
 //
 // Set BROWSER to the browser executable if it is not found automatically,
-// and SCREENSHOT=<file.png> to save a screenshot of the opened document.
+// SCREENSHOT=<file.png> to save a screenshot of the opened document,
+// SCREENSHOT_DIR=<folder> to save screenshots of the main screens at desktop
+// and phone widths, and SAVE_DIR=<folder> to save the edited documents (for
+// checking them in Word).
 // Native file pickers cannot be automated, so files are opened by dropping
 // them onto the workspace, which uses the same code path as "Open".
 
@@ -275,6 +278,24 @@ async function main() {
     const saved = await evaluate(`fetch("/api/documents/1/download").then((r) => r.arrayBuffer()).then((b) => b.byteLength)`);
     check(saved > 2000, `the formatted document saves (${saved} bytes)`);
 
+    const caretIn = (selector, offset) =>
+      evaluate(`(() => {
+        const p = document.querySelector(${JSON.stringify(selector)});
+        p.closest("[contenteditable=true]").focus();
+        const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        let left = ${offset}, node, range = document.createRange();
+        range.setStart(p, 0);
+        while ((node = walker.nextNode())) {
+          if (left <= node.data.length) { range.setStart(node, left); break; }
+          left -= node.data.length;
+        }
+        range.collapse(true);
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      })()`);
+    const cellPara0 = '#doc-content td[data-row="0"][data-cell="0"] > [data-block="0"]';
+
     // Insert a table through the Insert table dialog and change it with the table toolbar.
     await caretAt(0, 3);
     await evaluate(`document.querySelector('[data-insert="table"]').click()`);
@@ -354,6 +375,29 @@ async function main() {
     check(await waitForModel(1, (m) => pageBreaks(m) === 2, "ctrl+enter"), "Ctrl+Enter inserts a page break");
     check(await waitFor(`document.querySelectorAll("#doc-content .obj-page_break").length === 2`), "page breaks are shown");
 
+    const shot = async (name, width = 1280, height = 900) => {
+      if (!process.env.SCREENSHOT_DIR) return;
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 600 });
+      await sleep(400);
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+      writeFileSync(join(process.env.SCREENSHOT_DIR, `${name}.png`), Buffer.from(data, "base64"));
+      await cdp.send("Emulation.clearDeviceMetricsOverride");
+    };
+    const saveDocument = async (id, name) => {
+      if (!process.env.SAVE_DIR) return;
+      const base64 = await evaluate(`fetch("/api/documents/${id}/download").then((r) => r.arrayBuffer()).then((b) => { let s = ""; new Uint8Array(b).forEach((c) => (s += String.fromCharCode(c))); return btoa(s); })`);
+      writeFileSync(join(process.env.SAVE_DIR, name), Buffer.from(base64, "base64"));
+    };
+    await caretIn(cellPara0, 0);
+    await shot("new-document-desktop");
+    await shot("new-document-narrow", 420, 860);
+    await evaluate(`document.querySelector('[data-insert="page-setup"]').click()`);
+    await waitFor(`document.getElementById("page-setup-dialog").open`);
+    await shot("page-setup-dialog");
+    await shot("page-setup-dialog-narrow", 420, 860);
+    await evaluate(`document.querySelector('#page-setup-dialog button[value="cancel"]').click()`);
+    await saveDocument(1, "browser-new.docx");
+
     // Open the Word fixture by dropping it (accept the discard prompt).
     await evaluate(`window.confirm = () => true`);
     await drop(readFileSync(FIXTURE).toString("base64"), "word-sample.docx");
@@ -389,21 +433,6 @@ async function main() {
     check(after.length === before.length && after.slice(1).join("|") === before.slice(1).join("|"), "other paragraphs are unchanged");
 
     // Table cells, the header and the footer are editable.
-    const caretIn = (selector, offset) =>
-      evaluate(`(() => {
-        const p = document.querySelector(${JSON.stringify(selector)});
-        p.closest("[contenteditable=true]").focus();
-        const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
-        let left = ${offset}, node, range = document.createRange();
-        range.setStart(p, 0);
-        while ((node = walker.nextNode())) {
-          if (left <= node.data.length) { range.setStart(node, left); break; }
-          left -= node.data.length;
-        }
-        range.collapse(true);
-        getSelection().removeAllRanges();
-        getSelection().addRange(range);
-      })()`);
     const tableIndex = await evaluate(`Number(document.querySelector('#doc-content > [data-kind="table"]').dataset.block)`);
     const cellTexts = (row, cell) =>
       evaluate(`fetch("/api/documents/2").then((r) => r.json()).then((d) => JSON.stringify(d.model.blocks[${tableIndex}].rows[${row}].cells[${cell}].blocks.map((b) => (b.inlines || []).flatMap((i) => i.content || []).map((c) => c.text || "").join(""))))`);
@@ -477,6 +506,11 @@ async function main() {
     await mouse("mouseReleased", box2.x + box2.width / 2, box2.y + box2.height / 2);
     await press("Delete", "Delete", 46);
     check(await waitForModel(2, (m) => imagesIn(m, 0).length === 0, "delete picture"), "Delete removes a selected picture");
+
+    await caretIn(cellPara(1, 1), 0);
+    await shot("word-document-table-desktop");
+    await shot("word-document-table-narrow", 420, 860);
+    await saveDocument(2, "browser-word-sample.docx");
 
     if (process.env.SCREENSHOT) {
       await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
