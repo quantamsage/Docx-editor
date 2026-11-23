@@ -57,6 +57,9 @@
         <button type="button" class="tool" data-insert="picture" disabled title="Insert a picture from a file (or drop it on the page)">
           <span class="tool-icon" aria-hidden="true">🖼</span><span class="tool-label">Picture</span>
         </button>
+        <button type="button" class="tool" data-insert="page-break" disabled title="Start a new page here (Ctrl+Enter)">
+          <span class="tool-icon" aria-hidden="true">⤓</span><span class="tool-label">Page break</span>
+        </button>
         <button type="button" class="tool" data-insert="header" disabled title="Add or edit the header (or double-click the top of the page)">
           <span class="tool-icon" aria-hidden="true">▔</span><span class="tool-label">Header</span>
         </button>
@@ -67,6 +70,9 @@
           <span class="tool-icon" aria-hidden="true">#</span><span class="tool-label">Page numbers</span>
         </button>
         <input type="file" id="picture-input" accept=".png,.jpg,.jpeg,.gif,.bmp,image/png,image/jpeg,image/gif,image/bmp" hidden>
+        <button type="button" class="tool" data-insert="page-setup" disabled title="Paper size, orientation and margins">
+          <span class="tool-icon" aria-hidden="true">📄</span><span class="tool-label">Page setup</span>
+        </button>
       </div>
     </nav>
 
@@ -222,6 +228,36 @@
         <div class="dialog-buttons">
           <button type="submit" value="cancel" class="button" formnovalidate>Cancel</button>
           <button type="submit" value="ok" class="button button-primary">Insert</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="page-setup-dialog" aria-labelledby="page-setup-title">
+      <form method="dialog" class="dialog-form">
+        <h2 id="page-setup-title">Page setup</h2>
+        <p class="dialog-note">Applies to the whole document.</p>
+        <div class="dialog-grid">
+          <label for="page-paper">Paper size</label>
+          <select id="page-paper"></select>
+          <span>Orientation</span>
+          <span class="radio-row">
+            <label><input type="radio" name="page-orientation" id="page-portrait" value="portrait"> Portrait</label>
+            <label><input type="radio" name="page-orientation" id="page-landscape" value="landscape"> Landscape</label>
+          </span>
+          <label for="page-margin-preset">Margins</label>
+          <select id="page-margin-preset"></select>
+          <label for="page-margin-top">Top (cm)</label>
+          <input type="number" id="page-margin-top" min="0" max="55" step="0.01" required>
+          <label for="page-margin-bottom">Bottom (cm)</label>
+          <input type="number" id="page-margin-bottom" min="0" max="55" step="0.01" required>
+          <label for="page-margin-left">Left (cm)</label>
+          <input type="number" id="page-margin-left" min="0" max="55" step="0.01" required>
+          <label for="page-margin-right">Right (cm)</label>
+          <input type="number" id="page-margin-right" min="0" max="55" step="0.01" required>
+        </div>
+        <div class="dialog-buttons">
+          <button type="submit" value="cancel" class="button" formnovalidate>Cancel</button>
+          <button type="submit" value="ok" class="button button-primary">Apply</button>
         </div>
       </form>
     </dialog>

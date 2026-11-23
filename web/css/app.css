@@ -417,3 +417,5 @@ body {
   font: 0.75rem var(--ui-font);
   color: var(--muted);
 }
+.dialog-note { margin: -0.4rem 0 0.8rem; color: var(--muted); font-size: 0.85rem; }
+.radio-row { display: flex; gap: 1rem; flex-wrap: wrap; }

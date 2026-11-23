@@ -3,7 +3,7 @@
 // table. The edits themselves are built by the editor and tables.js.
 
 import { uploadImage } from "../api.js";
-import { pictureSize } from "../layout.js";
+import { MARGIN_PRESETS, PAPER_SIZES, marginPresetId, marginsOf, paperId, pictureSize, sectionFormat, twipsToCm } from "../layout.js";
 import { containerKey } from "./containers.js";
 import { TABLE_COMMANDS, hasBorders, tableEdits, tableSize } from "./tables.js";
 
@@ -148,7 +148,54 @@ export function createInsertTools({ editor, insertBar, tableBar, onInfo, onError
     await editor.applyDocumentEdits(edits);
   }
 
+  const SIDES = ["top", "bottom", "left", "right"];
+
+  function fillPageSetup() {
+    const section = editor.document.model.section || {};
+    const paper = paperId(section);
+    const options = PAPER_SIZES.map((p) => new Option(p.label, p.id));
+    if (paper === "custom") options.push(new Option("Current size (custom)", "custom"));
+    $("page-paper").replaceChildren(...options);
+    $("page-paper").value = paper;
+    const landscape = Boolean(section.landscape) || (section.page_width || 0) > (section.page_height || 0);
+    $(landscape ? "page-landscape" : "page-portrait").checked = true;
+    const presets = MARGIN_PRESETS.map((p) => new Option(p.label, p.id));
+    presets.push(new Option("Custom", "custom"));
+    $("page-margin-preset").replaceChildren(...presets);
+    $("page-margin-preset").value = marginPresetId(section);
+    const margins = marginsOf(section);
+    for (const side of SIDES) $(`page-margin-${side}`).value = String(twipsToCm(margins[side]));
+  }
+
+  $("page-margin-preset").addEventListener("change", () => {
+    const preset = MARGIN_PRESETS.find((p) => p.id === $("page-margin-preset").value);
+    if (preset) for (const side of SIDES) $(`page-margin-${side}`).value = String(twipsToCm(preset[side]));
+  });
+  for (const side of SIDES) {
+    $(`page-margin-${side}`).addEventListener("input", () => {
+      $("page-margin-preset").value = "custom";
+    });
+  }
+
+  async function pageSetup() {
+    if (!(await ask($("page-setup-dialog"), fillPageSetup))) return;
+    const margins = Object.fromEntries(SIDES.map((side) => [side, $(`page-margin-${side}`).value]));
+    const result = sectionFormat({
+      paper: $("page-paper").value,
+      landscape: $("page-landscape").checked,
+      margins,
+      section: editor.document.model.section,
+    });
+    if (result.error) {
+      onInfo(result.error);
+      return;
+    }
+    await editor.applyDocumentEdits([{ op: "format_section", format: result.format }]);
+  }
+
   const actions = {
+    "page-break": () => editor.insertPageBreak(),
+    "page-setup": pageSetup,
     table: insertTable,
     picture: choosePicture,
     header: () => editHeaderFooter("header"),

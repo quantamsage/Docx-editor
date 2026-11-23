@@ -325,6 +325,35 @@ async function main() {
     check(await waitForModel(1, (m) => footerFields(m).join() === "PAGE,NUMPAGES" && m.footer.blocks[0].alignment === "right", "page numbers"), "page numbers with the page count are added to the footer");
     check(await waitFor(`document.querySelector("#doc-footer .obj-field")?.textContent === "1"`), "the footer shows the page number");
 
+    // Page setup: Letter, landscape, narrow margins.
+    await caretAt(0, 0);
+    await evaluate(`document.querySelector('[data-insert="page-setup"]').click()`);
+    check(await waitFor(`document.getElementById("page-setup-dialog").open && document.getElementById("page-paper").value === "a4"`), "Page setup shows the current paper size");
+    await evaluate(`(() => {
+      document.getElementById("page-paper").value = "letter";
+      document.getElementById("page-landscape").checked = true;
+      const preset = document.getElementById("page-margin-preset");
+      preset.value = "narrow";
+      preset.dispatchEvent(new Event("change"));
+      document.querySelector('#page-setup-dialog button[value="ok"]').click();
+    })()`);
+    check(
+      await waitForModel(1, (m) => m.section.page_width === 15840 && m.section.page_height === 12240 && m.section.landscape && m.section.margin_left === 720, "page setup"),
+      "Page setup changes paper size, orientation and margins",
+    );
+    check(await waitFor(`document.querySelector("#workspace .page").getAttribute("aria-label").includes("Letter, landscape")`), "the page is shown in its new size");
+
+    // Page breaks: the toolbar button and Ctrl+Enter.
+    const pageBreaks = (m) => m.blocks.filter((b) => b.type === "paragraph" && (b.inlines || []).some((i) => (i.content || []).some((c) => c.type === "page_break"))).length;
+    await caretAt(0, 5);
+    await evaluate(`document.querySelector('[data-insert="page-break"]').click()`);
+    check(await waitForModel(1, (m) => pageBreaks(m) === 1, "page break"), "Page break inserts a page break");
+    await type("X");
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });
+    check(await waitForModel(1, (m) => pageBreaks(m) === 2, "ctrl+enter"), "Ctrl+Enter inserts a page break");
+    check(await waitFor(`document.querySelectorAll("#doc-content .obj-page_break").length === 2`), "page breaks are shown");
+
     // Open the Word fixture by dropping it (accept the discard prompt).
     await evaluate(`window.confirm = () => true`);
     await drop(readFileSync(FIXTURE).toString("base64"), "word-sample.docx");
