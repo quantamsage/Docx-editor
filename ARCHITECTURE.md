@@ -214,7 +214,7 @@ The model's `header` and `footer` are the default header and footer of the last 
 
 ### Reliable export
 
-`Document::save` writes only what changed (see the preservation strategy), then reads the archive it produced back: it must open as a Word document (content types, relationships, main part, body) and every part it rewrote must parse. If not, the save fails with `save_failed` and no file is produced, so a bug can never hand the user a file Word would refuse. In the browser, files are written through the File System Access API, which replaces the file only when the whole new content has been written; when writing fails, the message explains the likely cause (file open in Word, read-only, permission refused, disk full) and the document stays unsaved, with its draft.
+`Document::save` writes only what changed (see the preservation strategy), then reads the archive it produced back: it must open as a Word document (content types, relationships, main part, body) and every part it rewrote must parse. If not, the save fails with `save_failed` and no file is produced, so a damaged archive or malformed XML is never handed to the user. (Schema order is checked by the tests and `docx_tool check`, not at save time.) In the browser, files are written through the File System Access API, which replaces the file only when the whole new content has been written; when writing fails, the message explains the likely cause (file open in Word, read-only, permission refused, disk full) and the document stays unsaved, with its draft.
 
 ### Undo and redo
 
