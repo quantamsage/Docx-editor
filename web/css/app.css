@@ -240,15 +240,21 @@ body {
     var(--page-boundary) var(--page-height)
   );
 }
+/* The header sits in the top margin, at the header distance from the edge
+   of the page; the footer likewise in the bottom margin. A header taller
+   than its margin pushes the text down, as in Word. */
 .page.has-document .page-margins {
   position: static;
+  display: flex;
+  flex-direction: column;
   min-height: var(--page-height);
-  padding: var(--margin-top) var(--margin-right) var(--margin-bottom) var(--margin-left);
+  padding: var(--margin-header, var(--margin-top)) var(--margin-right) var(--margin-footer, var(--margin-bottom)) var(--margin-left);
   outline: none;
   overflow: visible;
 }
 
 .doc-content {
+  flex: 1 0 auto;
   min-height: calc(var(--page-height) - var(--margin-top) - var(--margin-bottom));
   outline: 1px dashed var(--margin-guide);
   outline-offset: 2px;
@@ -318,3 +324,47 @@ body {
 .tool-color:has(input:disabled) { color: #a19f9d; cursor: not-allowed; }
 .tool-color:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
 .tool[aria-pressed="true"] { box-shadow: inset 0 -2px 0 var(--title-bg); }
+
+/* ----- Headers and footers (Phase 5) ----- */
+.hf {
+  position: relative;
+  color: #3b3a39;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+  outline: none;
+  cursor: text;
+}
+.hf-header { min-height: calc(var(--margin-top) - var(--margin-header, var(--margin-top))); padding-bottom: 4px; }
+.hf-footer {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: calc(var(--margin-bottom) - var(--margin-footer, var(--margin-bottom)));
+  padding-top: 4px;
+}
+.hf .para { margin-bottom: 0; }
+/* Like Word, the header and footer are dimmed while the main text is edited. */
+.hf:not(:focus):not(:hover) { opacity: 0.72; }
+.hf:hover, .hf:focus { box-shadow: 0 1px 0 0 var(--margin-guide); }
+.hf-footer:hover, .hf-footer:focus { box-shadow: 0 -1px 0 0 var(--margin-guide); }
+.hf:hover::after, .hf:focus::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 0;
+  font: 0.7rem var(--ui-font);
+  color: #fff;
+  background: var(--title-bg);
+  padding: 1px 6px;
+  border-radius: 0 0 3px 3px;
+  pointer-events: none;
+}
+.hf-header:hover::after, .hf-header:focus::after { bottom: -16px; }
+.hf-footer:hover::after, .hf-footer:focus::after { top: -16px; border-radius: 3px 3px 0 0; }
+.hf[data-empty="true"] { cursor: default; }
+.obj-field { background: rgba(0, 0, 0, 0.06); border-radius: 2px; padding: 0 1px; }
+
+/* Tables: editable cells with the document's column widths. */
+.table-wrap table { table-layout: fixed; max-width: none; }
+.table-wrap table.table-gridlines td { border: 1px dotted #c8c6c4; }
+.table-wrap td { overflow-wrap: break-word; }

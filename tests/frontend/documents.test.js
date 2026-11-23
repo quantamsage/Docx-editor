@@ -24,7 +24,7 @@ test("pageGeometry recognises standard paper sizes and orientation", () => {
   assert.equal(a4.label, "A4, portrait");
   assert.equal(Math.round(a4.widthPx), 794);
   assert.equal(Math.round(a4.heightPx), 1123);
-  assert.deepEqual(a4.margins, { top: 96, right: 96, bottom: 96, left: 96 });
+  assert.deepEqual(a4.margins, { top: 96, right: 96, bottom: 96, left: 96, header: 47.2, footer: 47.2 }, "header and footer default to 1.25 cm");
 
   const letterLandscape = pageGeometry({ page_width: 15840, page_height: 12240, landscape: true });
   assert.equal(letterLandscape.label, "Letter, landscape");

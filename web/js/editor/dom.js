@@ -15,11 +15,15 @@ function isPlaceholder(node) {
   return node.nodeName === "BR" && node.dataset && "placeholder" in node.dataset;
 }
 
-/** The top-level block element containing `node`, or null. */
+/**
+ * The innermost block element (an element with `data-block`: a paragraph,
+ * a table or preserved content, possibly inside a table cell) containing
+ * `node`, or null.
+ */
 export function blockElement(root, node) {
   let n = node && node.nodeType === TEXT_NODE ? node.parentNode : node;
   while (n && n !== root) {
-    if (n.parentNode === root && n.dataset && n.dataset.block !== undefined) return n;
+    if (n.dataset && n.dataset.block !== undefined) return n;
     n = n.parentNode;
   }
   return null;
@@ -155,26 +159,32 @@ function endpoint(root, container, offset) {
     if (!block) return null;
   }
   const index = Number(block.dataset.block);
-  if (block.dataset.kind !== "paragraph") return { block: index, el: block, offset: 0, editable: false };
+  const key = block.dataset.container || "";
+  if (block.dataset.kind !== "paragraph") return { block: index, container: key, el: block, offset: 0, editable: false };
   const off = at === "end" ? paragraphLength(block) : at === 0 ? 0 : offsetOf(block, container, offset);
-  return { block: index, el: block, offset: off, editable: true };
+  return { block: index, container: key, el: block, offset: off, editable: true };
 }
 
 /**
- * The current selection within `root` as block/offset positions:
- * `{start, end, collapsed}`, or null when the selection is elsewhere.
- * Positions inside tables or other non-editable blocks are marked
- * `editable: false`.
+ * The current selection within one of `roots` (an element or a list of
+ * editing hosts: the body, the header, the footer) as positions
+ * `{block, container, offset, editable}`: `{start, end, collapsed, root}`,
+ * or null when the selection is elsewhere. `container` is the key of the
+ * paragraph's container ("" for the body). Positions in non-editable
+ * blocks are marked `editable: false`.
  */
-export function selectionInfo(root) {
-  const selection = root.ownerDocument.getSelection();
+export function selectionInfo(roots) {
+  const list = Array.isArray(roots) ? roots.filter(Boolean) : [roots];
+  if (!list.length) return null;
+  const selection = list[0].ownerDocument.getSelection();
   if (!selection || !selection.rangeCount) return null;
   const range = selection.getRangeAt(0);
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  const root = list.find((r) => r.contains(range.startContainer) && r.contains(range.endContainer));
+  if (!root) return null;
   const start = endpoint(root, range.startContainer, range.startOffset);
   const end = endpoint(root, range.endContainer, range.endOffset);
   if (!start || !end) return null;
-  return { start, end, collapsed: range.collapsed };
+  return { start, end, collapsed: range.collapsed, root };
 }
 
 /** Inserts plain text at the selection (used for Tab). */
@@ -192,12 +202,13 @@ export function insertTextAtSelection(doc, text) {
 }
 
 /**
- * Selects from {block, offset} to {block, offset} (block elements found
- * with `blockEl`). A collapsed range when both positions are equal.
+ * Selects from {block, container, offset} to {block, container, offset}
+ * (paragraph elements found with `blockEl(block, containerKey)`). A
+ * collapsed range when both positions are equal.
  */
 export function setSelection(blockEl, start, end) {
-  const startEl = blockEl(start.block);
-  const endEl = blockEl(end.block);
+  const startEl = blockEl(start.block, start.container || "");
+  const endEl = blockEl(end.block, end.container || "");
   if (!startEl || !endEl) return;
   const doc = startEl.ownerDocument;
   const a = positionAt(startEl, Math.min(start.offset, paragraphLength(startEl)));

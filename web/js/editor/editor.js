@@ -8,8 +8,12 @@
 //   the page are relabelled to match the server's new model instead.
 // * Edits that change paragraph structure (Enter, Backspace/Delete at a
 //   paragraph edge, typing or deleting over a selection that spans
-//   paragraphs, pasting, Shift+Enter) are intercepted, sent as one splice
-//   and the page is re-rendered from the server's answer.
+//   paragraphs, pasting, Shift+Enter, page breaks, pictures) are
+//   intercepted, sent as one splice and the page is re-rendered from the
+//   server's answer.
+// * Paragraphs live in containers (containers.js): the body, the cells of
+//   its tables, and the header and footer, which are separate editing hosts
+//   on the page. Every edit names its container; an edit can't span two.
 // * All requests run one at a time, in order, and name the document
 //   revision they were made against. If one fails, the document is
 //   reloaded from the server and the user is told.
@@ -28,23 +32,28 @@ import {
   segmentsToPieces,
   wordAt,
 } from "./content.js";
+import { containerBlocks, containerField, containerKey, parseContainerKey, parentKey } from "./containers.js";
 import { insertTextAtSelection, paragraphLength, parseParagraph, selectionInfo, setCaret, setSelection } from "./dom.js";
-import { renderBlocks } from "./render.js";
+import { renderBlocks, renderHeaderFooter } from "./render.js";
 
 /** How long typing must pause before the change is sent. */
 export const SYNC_DELAY_MS = 400;
 
 const BLOCKED_INPUT = new Set(["historyUndo", "historyRedo", "insertFromDrop", "deleteByDrag", "insertLink", "insertOrderedList", "insertUnorderedList", "insertHorizontalRule"]);
 
+/** "key#block" for the dirty set. */
+const dirtyId = (key, block) => `${key}#${block}`;
+
 /**
- * @param {HTMLElement} root  The element that holds the document's blocks.
+ * @param {HTMLElement} root  The element that holds the body's blocks.
  * @param {object} hooks
  * @param {(doc: {id: number, revision: number, model: object}) => void} hooks.onChange  After every applied edit.
  * @param {(message: string) => void} hooks.onError  When an edit could not be applied.
  * @param {(message: string) => void} [hooks.onInfo]  Short informational messages.
  * @param {(name: string) => void} [hooks.onCommand]  A formatting command the browser raised (e.g. "bold").
+ * @param {{header?: HTMLElement, footer?: HTMLElement}} [regions]  Editing hosts for the header and footer.
  */
-export function createEditor(root, { onChange, onError, onInfo = () => {}, onCommand = () => {} }) {
+export function createEditor(root, { onChange, onError, onInfo = () => {}, onCommand = () => {} }, regions = {}) {
   /** @type {{id: number, revision: number, model: object}|null} */
   let doc = null;
   const dirty = new Set();
@@ -52,11 +61,41 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   let chain = Promise.resolve();
   let structuralPending = false;
   let composing = false;
+  const hosts = [root, regions.header, regions.footer].filter(Boolean);
 
-  const blockEl = (index) => root.querySelector(`:scope > [data-block="${index}"]`);
+  /** The editing host holding a container's paragraphs. */
+  function hostFor(key) {
+    const { part } = parseContainerKey(key);
+    if (!part) return root;
+    if (doc && doc.model.header && doc.model.header.part === part) return regions.header || null;
+    if (doc && doc.model.footer && doc.model.footer.part === part) return regions.footer || null;
+    return null;
+  }
+
+  /** The element of block `index` of the container with key `key`. */
+  function blockEl(index, key = "") {
+    const host = hostFor(key);
+    if (!host) return null;
+    if (!key) return host.querySelector(`:scope > [data-block="${index}"]`);
+    for (const el of host.querySelectorAll(`[data-block="${index}"]`)) {
+      if ((el.dataset.container || "") === key) return el;
+    }
+    return null;
+  }
+
+  /** The blocks of a container in the current model (empty if gone). */
+  const blocksOf = (key) => (doc && containerBlocks(doc.model, key)) || [];
 
   function render() {
-    renderBlocks(root, doc.model, { mediaUrl: (part) => mediaUrl(doc.id, part) });
+    const ctx = { mediaUrl: (part) => mediaUrl(doc.id, part) };
+    renderBlocks(root, doc.model, ctx);
+    if (regions.header) renderHeaderFooter(regions.header, doc.model, doc.model.header, ctx);
+    if (regions.footer) renderHeaderFooter(regions.footer, doc.model, doc.model.footer, ctx);
+    for (const [region, hf] of [[regions.header, doc.model.header], [regions.footer, doc.model.footer]]) {
+      if (!region) continue;
+      region.contentEditable = hf ? "true" : "false";
+      region.dataset.empty = hf ? "false" : "true";
+    }
   }
 
   function load(info) {
@@ -74,8 +113,10 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     dirty.clear();
     replayQueue.length = 0;
     doc = null;
-    root.contentEditable = "false";
-    root.replaceChildren();
+    for (const host of hosts) {
+      host.contentEditable = "false";
+      host.replaceChildren();
+    }
   }
 
   // ----- Request queue -----
@@ -89,11 +130,11 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   async function recover(err) {
     const message = err instanceof ApiError || (err && err.message) ? err.message : String(err);
     if (!doc) return;
-    const caret = selectionInfo(root);
+    const caret = selectionInfo(hosts);
     try {
       const fresh = await getDocument(doc.id);
       load(fresh);
-      if (caret && caret.start.editable) placeCaret(caret.start.block, caret.start.offset);
+      if (caret && caret.start.editable) placeCaret(caret.start.block, caret.start.offset, caret.start.container);
       onChange(doc);
       onError(`Your last change could not be applied: ${message} The document was reloaded.`);
     } catch (reloadErr) {
@@ -105,19 +146,22 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   async function doSync() {
     clearTimeout(timer);
     if (!doc || dirty.size === 0) return;
-    const blocks = [...dirty].sort((a, b) => a - b);
+    const ids = [...dirty];
     dirty.clear();
     const edits = [];
-    const sent = new Map();
-    for (const b of blocks) {
-      const el = blockEl(b);
-      const paragraph = doc.model.blocks[b];
+    const sent = [];
+    for (const id of ids) {
+      const at = id.lastIndexOf("#");
+      const key = id.slice(0, at);
+      const b = Number(id.slice(at + 1));
+      const el = blockEl(b, key);
+      const paragraph = blocksOf(key)[b];
       if (!el || !paragraph || paragraph.type !== "paragraph") continue;
       const segments = normalizeSegments(paragraph, parseParagraph(el));
       const pieces = segmentsToPieces(b, paragraph, segments);
       if (isNoop(b, paragraph, pieces)) continue;
-      edits.push({ op: "splice", first: b, last: b, content: pieces });
-      sent.set(b, pieces);
+      edits.push({ op: "splice", ...containerField(key), first: b, last: b, content: pieces });
+      sent.push([key, b, pieces]);
     }
     if (!edits.length) return;
     const result = await applyEdits(doc.id, doc.revision, edits);
@@ -125,7 +169,7 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     doc.model = result.model;
     // The page may have changed while the request was out; keep it as it
     // is and point its runs at the new model's indices.
-    for (const [b, pieces] of sent) relabel(blockEl(b), remapAfterSplice(pieces));
+    for (const [key, b, pieces] of sent) relabel(blockEl(b, key), remapAfterSplice(pieces));
     onChange(doc);
   }
 
@@ -154,17 +198,17 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
 
   // ----- Structural edits -----
 
-  function placeCaret(block, offset) {
-    const el = blockEl(block);
+  function placeCaret(block, offset, key = "") {
+    const el = blockEl(block, key);
     if (!el || el.dataset.kind !== "paragraph") return;
     setCaret(el, Math.min(offset, paragraphLength(el)));
     el.scrollIntoView({ block: "nearest" });
   }
 
-  /** Current segments of paragraph `block` (from the page). */
-  function segmentsOf(block) {
-    const paragraph = doc.model.blocks[block];
-    return { block, paragraph, segments: normalizeSegments(paragraph, parseParagraph(blockEl(block))) };
+  /** Current segments of paragraph `block` of a container (from the page). */
+  function segmentsOf(block, key = "") {
+    const paragraph = blocksOf(key)[block];
+    return { block, paragraph, segments: normalizeSegments(paragraph, parseParagraph(blockEl(block, key))) };
   }
 
   /**
@@ -198,29 +242,48 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       });
   }
 
-  /** Replaces the range from `start` to `end` with `text` (see content.replaceRange). */
-  function replace(start, end, text) {
+  /**
+   * Replaces the range from `start` to `end` (positions in one container)
+   * with `text`, after inserting `objects` (e.g. a picture or a page break;
+   * see content.replaceRange).
+   */
+  function replace(start, end, text, objects = []) {
     return runEdit(() => {
+      const key = start.container || "";
+      if ((end.container || "") !== key) {
+        onInfo("Selections that cross the edge of a table, header or footer can't be changed.");
+        return null;
+      }
+      const blocks = blocksOf(key);
       for (let b = start.block; b <= end.block; b++) {
-        if (doc.model.blocks[b]?.type !== "paragraph") {
+        if (blocks[b]?.type !== "paragraph") {
           onInfo("Selections that include tables or protected content can't be changed yet.");
           return null;
         }
       }
-      const { splice, caret } = replaceRange({ ...segmentsOf(start.block), offset: start.offset }, { ...segmentsOf(end.block), offset: end.offset }, text);
-      return { edits: [{ op: "splice", ...splice }], after: () => placeCaret(caret.block, caret.offset) };
+      const { splice, caret } = replaceRange(
+        { ...segmentsOf(start.block, key), offset: start.offset },
+        { ...segmentsOf(end.block, key), offset: end.offset },
+        text,
+        objects,
+      );
+      return { edits: [{ op: "splice", ...containerField(key), ...splice }], after: () => placeCaret(caret.block, caret.offset, key) };
     });
   }
 
   /** The selection, or null (with a message) when it can't be formatted. */
   function editableSelection() {
-    const sel = selectionInfo(root);
+    const sel = selectionInfo(hosts);
     if (!sel) {
       onInfo("Place the cursor in the document first.");
       return null;
     }
     if (!sel.start.editable || !sel.end.editable) {
-      onInfo("Tables and protected content can't be formatted yet.");
+      onInfo("Protected content and nested tables can't be formatted.");
+      return null;
+    }
+    if (sel.start.container !== sel.end.container) {
+      onInfo("Select text within one table cell, header or footer to format it.");
       return null;
     }
     return sel;
@@ -233,38 +296,41 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   function formatText(format) {
     const sel = editableSelection();
     if (!sel) return Promise.resolve();
+    const key = sel.start.container;
     return runEdit(() => {
-      let start = { block: sel.start.block, offset: sel.start.offset };
-      let end = { block: sel.end.block, offset: sel.end.offset };
+      let start = { block: sel.start.block, offset: sel.start.offset, container: key };
+      let end = { block: sel.end.block, offset: sel.end.offset, container: key };
       if (sel.collapsed) {
-        const word = wordAt(segmentsOf(start.block).segments, start.offset);
+        const word = wordAt(segmentsOf(start.block, key).segments, start.offset);
         if (!word) {
           onInfo("Select the text to format.");
           return null;
         }
-        start = { block: start.block, offset: word[0] };
-        end = { block: start.block, offset: word[1] };
+        start = { ...start, offset: word[0] };
+        end = { ...start, offset: word[1] };
       }
+      const blocks = blocksOf(key);
       const paragraphs = [];
       for (let b = start.block; b <= end.block; b++) {
-        if (doc.model.blocks[b]?.type === "paragraph") paragraphs.push(segmentsOf(b));
+        if (blocks[b]?.type === "paragraph") paragraphs.push(segmentsOf(b, key));
       }
       const splices = formatRange(paragraphs, start.offset, end.offset, format);
       const caret = sel.collapsed ? { block: sel.start.block, offset: sel.start.offset } : null;
       return {
-        edits: splices.map((s) => ({ op: "splice", ...s })),
-        after: () => (caret ? placeCaret(caret.block, caret.offset) : setSelection(blockEl, start, end)),
+        edits: splices.map((s) => ({ op: "splice", ...containerField(key), ...s })),
+        after: () => (caret ? placeCaret(caret.block, caret.offset, key) : setSelection(blockEl, start, end)),
       };
     });
   }
 
   /** Paragraph blocks touched by the selection. */
   function selectedParagraphs(sel) {
-    const blocks = [];
+    const blocks = blocksOf(sel.start.container);
+    const out = [];
     for (let b = sel.start.block; b <= sel.end.block; b++) {
-      if (doc.model.blocks[b]?.type === "paragraph") blocks.push(b);
+      if (blocks[b]?.type === "paragraph") out.push(b);
     }
-    return blocks;
+    return out;
   }
 
   /**
@@ -275,47 +341,168 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   function formatParagraphs(format) {
     const sel = editableSelection();
     if (!sel) return Promise.resolve();
+    const key = sel.start.container;
     return runEdit(() => {
+      const blocks = blocksOf(key);
       const edits = [];
       for (const block of selectedParagraphs(sel)) {
-        const f = typeof format === "function" ? format(doc.model.blocks[block], block) : format;
+        const f = typeof format === "function" ? format(blocks[block], block) : format;
         if (!f) continue;
         const prev = edits[edits.length - 1];
         // Neighbouring paragraphs with the same change share one edit.
         if (prev && prev.last === block - 1 && JSON.stringify(prev.format) === JSON.stringify(f)) prev.last = block;
-        else edits.push({ op: "format_paragraphs", first: block, last: block, format: f });
+        else edits.push({ op: "format_paragraphs", ...containerField(key), first: block, last: block, format: f });
       }
-      const start = { block: sel.start.block, offset: sel.start.offset };
-      const end = { block: sel.end.block, offset: sel.end.offset };
-      return { edits, after: () => (sel.collapsed ? placeCaret(start.block, start.offset) : setSelection(blockEl, start, end)) };
+      const start = { block: sel.start.block, offset: sel.start.offset, container: key };
+      const end = { block: sel.end.block, offset: sel.end.offset, container: key };
+      return { edits, after: () => (sel.collapsed ? placeCaret(start.block, start.offset, key) : setSelection(blockEl, start, end)) };
     });
   }
 
   /**
+   * The table cell at the start of the selection, or null:
+   * {container (of the table), table, row, cell}.
+   */
+  function cellAt(sel) {
+    const { part, cell } = parseContainerKey(sel.start.container);
+    if (!cell) return null;
+    return { container: parentKey(sel.start.container), part, ...cell };
+  }
+
+  /**
    * Formatting at the start of the selection, for the toolbar:
-   * {run: RunProps, paragraph: Paragraph, list: "bullet"|"number"|null,
-   * paragraphs: Paragraph[]}, or null.
+   * {run, paragraph, list, paragraphs, container, cell, table}, or null.
    */
   function currentFormat() {
     if (!doc) return null;
-    const sel = selectionInfo(root);
+    const sel = selectionInfo(hosts);
     if (!sel || !sel.start.editable) return null;
-    const { paragraph, segments } = segmentsOf(sel.start.block);
+    const key = sel.start.container;
+    const { paragraph, segments } = segmentsOf(sel.start.block, key);
+    if (!paragraph) return null;
     const offset = sel.collapsed ? sel.start.offset : Math.min(sel.start.offset + 1, segmentsLength(segments));
+    const cell = cellAt(sel);
+    const table = cell ? blocksOf(cell.container)[cell.table] : null;
     return {
       run: formatAt(paragraph, segments, offset),
       paragraph,
       list: listKind(doc.model, paragraph),
-      paragraphs: selectedParagraphs(sel).map((b) => doc.model.blocks[b]),
+      paragraphs: selectedParagraphs(sel).map((b) => blocksOf(key)[b]),
+      container: key,
+      cell,
+      table,
     };
   }
 
-  function previousParagraph(block) {
-    return block > 0 && doc.model.blocks[block - 1]?.type === "paragraph" ? block - 1 : null;
+  function previousParagraph(block, key) {
+    return block > 0 && blocksOf(key)[block - 1]?.type === "paragraph" ? block - 1 : null;
   }
 
-  function nextParagraph(block) {
-    return doc.model.blocks[block + 1]?.type === "paragraph" ? block + 1 : null;
+  function nextParagraph(block, key) {
+    return blocksOf(key)[block + 1]?.type === "paragraph" ? block + 1 : null;
+  }
+
+  // ----- Insertions and document-level edits -----
+
+  /** The editable caret position, or null (with a message). */
+  function caretPosition(what) {
+    const sel = editableSelection();
+    if (!sel) return null;
+    if (what === "page break" && sel.start.container) {
+      onInfo("Page breaks can only be inserted in the main text, not in tables, headers or footers.");
+      return null;
+    }
+    return sel;
+  }
+
+  /** Inserts a page break at the cursor (Ctrl+Enter): the text after it starts on a new page. */
+  function insertPageBreak() {
+    const sel = caretPosition("page break");
+    if (!sel) return Promise.resolve();
+    return replace(sel.start, sel.end, "\n", [{ type: "page_break" }]);
+  }
+
+  /** Inserts a staged picture at the cursor. */
+  function insertImage(image) {
+    const sel = caretPosition("picture");
+    if (!sel) return Promise.resolve();
+    return replace(sel.start, sel.end, "", [{ type: "image", ...image }]);
+  }
+
+  /** Resizes the picture `inline` of paragraph `block` (sizes in EMUs). */
+  function resizeImage(key, block, inline, width_emu, height_emu) {
+    return runEdit(() => ({
+      edits: [{ op: "resize_image", ...containerField(key), block, inline, width_emu, height_emu }],
+      after: () => placeCaret(block, inline + 1, key),
+    }));
+  }
+
+  /**
+   * Inserts a table of `rows` × `columns` at the cursor: in place of an
+   * empty paragraph, otherwise after the cursor's paragraph. The cursor
+   * moves into its first cell.
+   */
+  function insertTable(rows, columns) {
+    const sel = editableSelection();
+    if (!sel) return Promise.resolve();
+    if (parseContainerKey(sel.start.container).cell) {
+      onInfo("Tables can't be inserted inside a table cell.");
+      return Promise.resolve();
+    }
+    const key = sel.start.container;
+    return runEdit(() => {
+      const block = sel.start.block;
+      const paragraph = blocksOf(key)[block];
+      const empty = paragraph && !(paragraph.inlines || []).length;
+      const at = empty ? block : block + 1;
+      const before = blocksOf(key).length;
+      return {
+        edits: [{ op: "insert_table", ...containerField(key), at, rows, columns }],
+        after: () => {
+          const blocks = blocksOf(key);
+          const table = blocks.findIndex((b, i) => i >= at && b.type === "table");
+          const cell = { ...parseContainerKey(key), cell: { table, row: 0, cell: 0 } };
+          if (table >= 0 && blocks.length > before) placeCaret(0, 0, containerKey(cell));
+        },
+      };
+    });
+  }
+
+  /**
+   * Runs a table command at the cursor's cell. `build(cell, table)` returns
+   * the edits and where the cursor goes afterwards ({row, cell}).
+   */
+  function tableCommand(build) {
+    const sel = selectionInfo(hosts);
+    const cell = sel && sel.start.editable ? cellAt(sel) : null;
+    if (!cell) {
+      onInfo("Place the cursor in a table first.");
+      return Promise.resolve();
+    }
+    return runEdit(() => {
+      const table = blocksOf(cell.container)[cell.table];
+      const built = build(cell, table);
+      if (!built) return null;
+      return {
+        edits: built.edits,
+        after: () => {
+          if (!built.caret) return;
+          const t = blocksOf(cell.container)[cell.table];
+          if (!t || t.type !== "table") {
+            placeCaret(Math.min(cell.table, blocksOf(cell.container).length - 1), 0, cell.container);
+            return;
+          }
+          const row = Math.max(0, Math.min(built.caret.row, t.rows.length - 1));
+          const c = Math.max(0, Math.min(built.caret.cell, t.rows[row].cells.length - 1));
+          placeCaret(0, 0, containerKey({ part: cell.part, cell: { table: cell.table, row, cell: c } }));
+        },
+      };
+    });
+  }
+
+  /** Applies document-level edits (page setup, headers, footers, page numbers). */
+  function applyDocumentEdits(edits, after) {
+    return runEdit(() => ({ edits, after }));
   }
 
   // ----- Events -----
@@ -352,10 +539,16 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       if (command) onCommand(Object.keys(command)[0]);
       return true;
     }
-    const sel = selectionInfo(root);
+    const sel = selectionInfo(hosts);
     if (!sel) return true;
     if (!sel.start.editable || !sel.end.editable) {
-      onInfo("Tables and protected content can't be edited yet.");
+      onInfo("Protected content and nested tables can't be edited.");
+      return true;
+    }
+    const key = sel.start.container;
+    if (sel.end.container !== key) {
+      // Only deletions and typing over such a selection reach here; refuse them.
+      onInfo("Selections that cross the edge of a table, header or footer can't be changed.");
       return true;
     }
     const multi = sel.start.block !== sel.end.block;
@@ -381,8 +574,8 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
           return true;
         }
         if (sel.collapsed && sel.start.offset === 0) {
-          const prev = previousParagraph(sel.start.block);
-          if (prev !== null) replace({ block: prev, offset: paragraphLength(blockEl(prev)) }, sel.start, "");
+          const prev = previousParagraph(sel.start.block, key);
+          if (prev !== null) replace({ block: prev, container: key, offset: paragraphLength(blockEl(prev, key)) }, sel.start, "");
           return true;
         }
         return false;
@@ -395,8 +588,8 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
           return true;
         }
         if (sel.collapsed && sel.start.offset === paragraphLength(sel.start.el)) {
-          const next = nextParagraph(sel.start.block);
-          if (next !== null) replace(sel.start, { block: next, offset: 0 }, "");
+          const next = nextParagraph(sel.start.block, key);
+          if (next !== null) replace(sel.start, { block: next, container: key, offset: 0 }, "");
           return true;
         }
         return false;
@@ -433,10 +626,12 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   }
 
   function markDirtyAtSelection() {
-    const sel = selectionInfo(root);
-    if (!sel) return;
+    const sel = selectionInfo(hosts);
+    if (!sel || sel.start.container !== sel.end.container) return;
+    const key = sel.start.container;
+    const blocks = blocksOf(key);
     for (let b = sel.start.block; b <= sel.end.block; b++) {
-      if (doc.model.blocks[b]?.type === "paragraph") dirty.add(b);
+      if (blocks[b]?.type === "paragraph") dirty.add(dirtyId(key, b));
     }
   }
 
@@ -454,9 +649,14 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       onInfo("Undo and redo are not available yet.");
       return;
     }
+    if (mod && !event.altKey && !event.shiftKey && event.key === "Enter") {
+      event.preventDefault();
+      insertPageBreak();
+      return;
+    }
     if (event.key === "Tab" && !mod && !event.altKey && !event.shiftKey) {
-      const sel = selectionInfo(root);
-      if (sel && sel.start.editable && sel.start.block === sel.end.block) {
+      const sel = selectionInfo(hosts);
+      if (sel && sel.start.editable && sel.start.block === sel.end.block && sel.start.container === sel.end.container) {
         event.preventDefault();
         insertTextAtSelection(root.ownerDocument, "\t");
         onInput();
@@ -474,18 +674,20 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     if (event.dataTransfer && !Array.from(event.dataTransfer.types || []).includes("Files")) event.preventDefault();
   }
 
-  root.addEventListener("beforeinput", onBeforeInput);
-  root.addEventListener("input", onInput);
-  root.addEventListener("keydown", onKeyDown);
-  root.addEventListener("paste", onPaste);
-  root.addEventListener("drop", onDrop);
-  root.addEventListener("compositionstart", () => {
-    composing = true;
-  });
-  root.addEventListener("compositionend", () => {
-    composing = false;
-    onInput();
-  });
+  for (const host of hosts) {
+    host.addEventListener("beforeinput", onBeforeInput);
+    host.addEventListener("input", onInput);
+    host.addEventListener("keydown", onKeyDown);
+    host.addEventListener("paste", onPaste);
+    host.addEventListener("drop", onDrop);
+    host.addEventListener("compositionstart", () => {
+      composing = true;
+    });
+    host.addEventListener("compositionend", () => {
+      composing = false;
+      onInput();
+    });
+  }
 
   return {
     load,
@@ -495,6 +697,15 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     formatText,
     formatParagraphs,
     currentFormat,
+    insertPageBreak,
+    insertImage,
+    resizeImage,
+    insertTable,
+    tableCommand,
+    applyDocumentEdits,
+    placeCaret,
+    /** The editing hosts (body, header, footer). */
+    hosts,
     /** Whether changes are waiting to be sent. */
     hasPendingChanges: () => dirty.size > 0 || structuralPending || replayQueue.length > 0,
     get document() {

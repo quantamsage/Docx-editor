@@ -163,7 +163,7 @@ async function main() {
       evaluate(`(() => {
         const content = document.getElementById("doc-content");
         content.focus();
-        const p = content.querySelector('[data-block="${block}"]');
+        const p = content.querySelector(':scope > [data-block="${block}"]');
         const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
         let left = ${offset}, node, range = document.createRange();
         range.setStart(p, 0);
@@ -220,7 +220,7 @@ async function main() {
       evaluate(`(() => {
         const content = document.getElementById("doc-content");
         content.focus();
-        const p = content.querySelector('[data-block="${block}"]');
+        const p = content.querySelector(':scope > [data-block="${block}"]');
         const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
         const at = (offset) => { let left = offset, node; walker.currentNode = p; while ((node = walker.nextNode())) { if (left <= node.data.length) return [node, left]; left -= node.data.length; } return [p, p.childNodes.length]; };
         const range = document.createRange();
@@ -261,7 +261,7 @@ async function main() {
     await caretAt(0, 3);
     await evaluate(`(() => { const s = document.getElementById("style-select"); s.value = "Heading1"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
     check(await waitForModel(1, (m) => m.blocks[0].style_id === "Heading1", "style"), "the style menu applies Heading 1");
-    check(await waitFor(`!!document.querySelector('#doc-content [data-block="0"].para-heading-1')`), "the heading is shown with its style");
+    check(await waitFor(`!!document.querySelector('#doc-content > [data-block="0"].para-heading-1')`), "the heading is shown with its style");
 
     await caretAt(0, 3);
     await evaluate(`document.querySelector('[data-format="align"][data-value="center"]').click()`);
@@ -270,7 +270,7 @@ async function main() {
     await caretAt(0, 3);
     await evaluate(`document.querySelector('[data-format="list"][data-value="bullet"]').click()`);
     check(await waitForModel(1, (m) => m.blocks[0].numbering && m.lists.length === 1 && m.lists[0].levels[0].format === "bullet", "bullets"), "Bulleted list creates a list in a new document");
-    check(await waitFor(`document.querySelector('#doc-content [data-block="0"]').dataset.marker === "•"`), "the list marker is shown");
+    check(await waitFor(`document.querySelector('#doc-content > [data-block="0"]').dataset.marker === "•"`), "the list marker is shown");
     check(await waitFor(`document.querySelector('[data-format="list"][data-value="bullet"]').getAttribute("aria-pressed") === "true"`), "the list button shows the paragraph is in a list");
     const saved = await evaluate(`fetch("/api/documents/1/download").then((r) => r.arrayBuffer()).then((b) => b.byteLength)`);
     check(saved > 2000, `the formatted document saves (${saved} bytes)`);
@@ -308,6 +308,54 @@ async function main() {
     );
     const after = JSON.parse(await serverTexts(2));
     check(after.length === before.length && after.slice(1).join("|") === before.slice(1).join("|"), "other paragraphs are unchanged");
+
+    // Table cells, the header and the footer are editable.
+    const caretIn = (selector, offset) =>
+      evaluate(`(() => {
+        const p = document.querySelector(${JSON.stringify(selector)});
+        p.closest("[contenteditable=true]").focus();
+        const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        let left = ${offset}, node, range = document.createRange();
+        range.setStart(p, 0);
+        while ((node = walker.nextNode())) {
+          if (left <= node.data.length) { range.setStart(node, left); break; }
+          left -= node.data.length;
+        }
+        range.collapse(true);
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+      })()`);
+    const tableIndex = await evaluate(`Number(document.querySelector('#doc-content > [data-kind="table"]').dataset.block)`);
+    const cellTexts = (row, cell) =>
+      evaluate(`fetch("/api/documents/2").then((r) => r.json()).then((d) => JSON.stringify(d.model.blocks[${tableIndex}].rows[${row}].cells[${cell}].blocks.map((b) => (b.inlines || []).flatMap((i) => i.content || []).map((c) => c.text || "").join(""))))`);
+    const waitForCell = async (row, cell, expected) => {
+      const want = JSON.stringify(expected);
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        if ((await cellTexts(row, cell)) === want) return true;
+        await sleep(150);
+      }
+      console.log(`     cell has ${await cellTexts(row, cell)}`);
+      return false;
+    };
+    const cellPara = (row, cell, i = 0) => `#doc-content td[data-row="${row}"][data-cell="${cell}"] > [data-block="${i}"]`;
+    check(await evaluate(`!!document.querySelector(${JSON.stringify(cellPara(1, 1))})?.closest("[contenteditable=true]")`), "table cells are editable");
+    await caretIn(cellPara(1, 1), 2);
+    await type("5");
+    check(await waitForCell(1, 1, ["105"]), "typing in a table cell changes the cell");
+    await press("Enter", "Enter", 13);
+    await type("more");
+    check(await waitForCell(1, 1, ["105", "more"]), "Enter in a cell adds a paragraph to the cell");
+    check(await evaluate(`document.querySelectorAll('#doc-content td[data-row="1"][data-cell="1"] > .para').length === 2`), "the cell shows both paragraphs");
+
+    check((await text("doc-header")).includes("Company Confidential"), "the header is shown");
+    check(await evaluate(`document.querySelectorAll("#doc-footer .obj").length > 0`), "the footer's page number field is shown");
+    await caretIn("#doc-header .para", "Company Confidential".length);
+    await type(" draft");
+    check(
+      await waitFor(`fetch("/api/documents/2").then((r) => r.json()).then((d) => d.model.header.blocks[0].inlines.map((i) => (i.content || []).map((c) => c.text || "").join("")).join("") === "Company Confidential draft")`),
+      "typing in the header changes the header",
+    );
 
     if (process.env.SCREENSHOT) {
       await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });

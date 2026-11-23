@@ -70,7 +70,7 @@ function renderDocument() {
   }
 
   $("welcome").hidden = Boolean(current);
-  $("doc-content").hidden = !current;
+  for (const id of ["doc-content", "doc-header", "doc-footer"]) $(id).hidden = !current;
   document.querySelector("#workspace .page").classList.toggle("has-document", Boolean(current));
   applyPageGeometry(current ? current.model.section : null);
   renderStatus();
@@ -86,6 +86,8 @@ function applyPageGeometry(section) {
   page.style.setProperty("--margin-right", `${geometry.margins.right}px`);
   page.style.setProperty("--margin-bottom", `${geometry.margins.bottom}px`);
   page.style.setProperty("--margin-left", `${geometry.margins.left}px`);
+  page.style.setProperty("--margin-header", `${Math.min(geometry.margins.header, geometry.margins.top)}px`);
+  page.style.setProperty("--margin-footer", `${Math.min(geometry.margins.footer, geometry.margins.bottom)}px`);
   page.dataset.orientation = geometry.landscape ? "landscape" : "portrait";
   page.setAttribute("aria-label", `Document page (${geometry.label})`);
   return geometry;
@@ -309,18 +311,20 @@ function bindEditor() {
     onCommand(name) {
       toolbar.command(name);
     },
-  });
+  }, { header: $("doc-header"), footer: $("doc-footer") });
   toolbar = createToolbar($("format-toolbar"), editor);
-  $("doc-content").addEventListener("keydown", (event) => toolbar.handleKey(event));
-  // Typing changes the page count and the caret's page.
-  $("doc-content").addEventListener("input", () => {
-    if (current && !current.unsaved) {
-      current.unsaved = true;
-      renderDocument();
-    } else {
-      renderStatus();
-    }
-  });
+  for (const host of editor.hosts) {
+    host.addEventListener("keydown", (event) => toolbar.handleKey(event));
+    // Typing changes the page count and the caret's page.
+    host.addEventListener("input", () => {
+      if (current && !current.unsaved) {
+        current.unsaved = true;
+        renderDocument();
+      } else {
+        renderStatus();
+      }
+    });
+  }
   let pending = 0;
   document.addEventListener("selectionchange", () => {
     if (!current) return;

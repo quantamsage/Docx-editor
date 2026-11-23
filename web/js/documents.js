@@ -22,6 +22,8 @@ const DEFAULT_SECTION = {
   margin_right: 1440,
   margin_bottom: 1440,
   margin_left: 1440,
+  margin_header: 708,
+  margin_footer: 708,
 };
 
 /** Converts twentieths of a point to CSS pixels. */
@@ -53,6 +55,8 @@ export function pageGeometry(section) {
       right: twipsToPx(s.margin_right),
       bottom: twipsToPx(Math.abs(s.margin_bottom)),
       left: twipsToPx(s.margin_left),
+      header: twipsToPx(Math.max(0, s.margin_header)),
+      footer: twipsToPx(Math.max(0, s.margin_footer)),
     },
     sizeName,
     landscape,

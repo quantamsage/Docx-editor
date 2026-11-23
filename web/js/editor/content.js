@@ -48,6 +48,9 @@ export function describeObject(inline) {
     const text = (inline.runs || []).map(runText).join("");
     return { kind: "link", label: text || inline.url || inline.anchor || "link", visible: true, url: inline.url || null, anchor: inline.anchor || null };
   }
+  if (inline.type === "other" && inline.field) {
+    return { kind: "field", label: inline.text || "#", visible: true, field: inline.field };
+  }
   if (inline.type === "other") {
     const text = inline.text || "";
     return { kind: "preserved", label: text, visible: text.trim() !== "", element: inline.kind };
@@ -204,9 +207,12 @@ export function splitSegments(segments, offset) {
  * @param {{block: number, paragraph: object, segments: object[], offset: number}} start
  * @param {{block: number, paragraph: object, segments: object[], offset: number}} end
  * @param {string} text
+ * @param {object[]} [objects]  Pieces inserted before the text, e.g. a
+ *   picture `{type: "image", …}` or `{type: "page_break"}`; each counts as
+ *   one character for the caret.
  * @returns {{splice: {first: number, last: number, content: object[]}, caret: {block: number, offset: number}}}
  */
-export function replaceRange(start, end, text) {
+export function replaceRange(start, end, text, objects = []) {
   const head = splitSegments(start.segments, start.offset).before;
   const tail = splitSegments(end.segments, end.offset).after;
 
@@ -247,6 +253,8 @@ export function replaceRange(start, end, text) {
     stickyBetween(end.paragraph, end.segments, 0, end.offset).forEach((seg) => add(end.block, end.paragraph, seg, [seg], 0));
   }
 
+  content.push(...objects);
+
   // "\n" separates paragraphs; LINE_BREAK is a line break inside one.
   const lines = text.replace(/\r\n?/g, "\n").split("\n").map((l) => l.replaceAll(LINE_BREAK, "\n"));
   lines.forEach((line, i) => {
@@ -262,7 +270,7 @@ export function replaceRange(start, end, text) {
   const lastLine = lines[lines.length - 1];
   const caret =
     lines.length === 1
-      ? { block: start.block, offset: segmentsLength(head) + lastLine.length }
+      ? { block: start.block, offset: segmentsLength(head) + objects.length + lastLine.length }
       : { block: start.block + lines.length - 1, offset: lastLine.length };
   return { splice: { first: start.block, last: end.block, content }, caret };
 }
