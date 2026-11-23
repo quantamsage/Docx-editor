@@ -3,6 +3,7 @@
 import { closeDocument, downloadDocument, getHealth, newDocument, openDocument } from "./api.js";
 import { ensureDocxExtension, pageGeometry } from "./documents.js";
 import { createEditor } from "./editor/editor.js";
+import { createFindBar } from "./editor/findbar.js";
 import { enablePictureResizing } from "./editor/images.js";
 import { PICTURE_TYPES, createInsertTools } from "./editor/insert.js";
 import { createToolbar } from "./editor/toolbar.js";
@@ -18,6 +19,7 @@ let busy = false;
 let editor = null;
 let toolbar = null;
 let insertTools = null;
+let findBar = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -65,7 +67,7 @@ function renderDocument() {
   document.title = `${current && current.unsaved ? "• " : ""}${name} – DOCX Editor`;
   $("document-name").textContent = name;
 
-  for (const action of ["save", "save-as"]) {
+  for (const action of ["save", "save-as", "find"]) {
     document.querySelector(`[data-action="${action}"]`).disabled = busy || !current;
   }
   for (const action of ["new", "open"]) {
@@ -261,6 +263,7 @@ function bindToolbar() {
     "save-as": saveAs,
     undo: () => editor.undo(),
     redo: () => editor.redo(),
+    find: () => findBar.open(true),
   };
   for (const button of document.querySelectorAll(".toolbar-main [data-action]")) {
     const action = actions[button.dataset.action];
@@ -271,11 +274,19 @@ function bindToolbar() {
 
 function bindShortcuts() {
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && findBar.isOpen && !event.defaultPrevented) {
+      event.preventDefault();
+      findBar.close();
+      return;
+    }
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
     const key = event.key.toLowerCase();
     if (key === "o") {
       event.preventDefault();
       chooseAndOpen();
+    } else if ((key === "f" || key === "h") && current) {
+      event.preventDefault();
+      findBar.open(key === "h");
     } else if (key === "s") {
       event.preventDefault();
       if (event.shiftKey) saveAs();
@@ -325,6 +336,7 @@ function bindEditor() {
       current.model = doc.model;
       current.unsaved = true;
       renderDocument();
+      findBar.refresh();
     },
     onError(message) {
       showNotice(message);
@@ -345,6 +357,7 @@ function bindEditor() {
     onError: (message) => showNotice(message),
   });
   enablePictureResizing(editor);
+  findBar = createFindBar({ editor, bar: $("find-bar"), onInfo: (message) => showNotice(message, "warning") });
   for (const host of editor.hosts) {
     host.addEventListener("keydown", (event) => toolbar.handleKey(event));
     // Typing changes the page count and the caret's page.

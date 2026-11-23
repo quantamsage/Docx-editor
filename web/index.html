@@ -46,7 +46,7 @@
         </button>
       </div>
       <div class="toolbar-group" role="group" aria-label="Editing">
-        <button type="button" class="tool" data-action="find" disabled title="Find and replace (Ctrl+H) — not available yet">
+        <button type="button" class="tool" data-action="find" disabled title="Find (Ctrl+F) and replace (Ctrl+H)">
           <span class="tool-icon" aria-hidden="true">🔍</span><span class="tool-label">Find</span>
         </button>
       </div>
@@ -169,6 +169,25 @@
         <button type="button" class="tool" data-table="delete-table" title="Delete the whole table"><span class="tool-icon" aria-hidden="true">🗑</span><span class="tool-label">Delete table</span></button>
       </div>
     </nav>
+
+    <div class="findbar" id="find-bar" role="search" aria-label="Find and replace" hidden>
+      <div class="findbar-row">
+        <label class="visually-hidden" for="find-input">Find</label>
+        <input type="search" id="find-input" class="find-input" placeholder="Find in document" maxlength="255" autocomplete="off" spellcheck="false">
+        <span class="find-count" id="find-count" aria-live="polite"></span>
+        <button type="button" class="tool tool-square" data-find="prev" title="Previous match (Shift+Enter)"><span aria-hidden="true">↑</span><span class="visually-hidden">Previous match</span></button>
+        <button type="button" class="tool tool-square" data-find="next" title="Next match (Enter)"><span aria-hidden="true">↓</span><span class="visually-hidden">Next match</span></button>
+        <label class="find-option"><input type="checkbox" id="find-case"> Match case</label>
+        <label class="find-option"><input type="checkbox" id="find-word"> Whole words</label>
+        <button type="button" class="tool tool-square find-close" data-find="close" title="Close (Esc)"><span aria-hidden="true">×</span><span class="visually-hidden">Close find</span></button>
+      </div>
+      <div class="findbar-row" id="replace-row" hidden>
+        <label class="visually-hidden" for="replace-input">Replace with</label>
+        <input type="text" id="replace-input" class="find-input" placeholder="Replace with" maxlength="1000" autocomplete="off" spellcheck="false">
+        <button type="button" class="tool" data-find="replace" title="Replace this match (Enter)">Replace</button>
+        <button type="button" class="tool" data-find="replace-all" title="Replace every match (one undo step)">Replace all</button>
+      </div>
+    </div>
 
     <div class="notice" id="notice" role="alert" hidden>
       <span class="notice-text" id="notice-text"></span>

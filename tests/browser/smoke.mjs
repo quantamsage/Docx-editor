@@ -535,6 +535,42 @@ async function main() {
     await press("Delete", "Delete", 46);
     check(await waitForModel(2, (m) => imagesIn(m, 0).length === 0, "delete picture"), "Delete removes a selected picture");
 
+    // Find and replace.
+    const bodyText = () => evaluate(`fetch("/api/documents/2").then((r) => r.json()).then((d) => JSON.stringify(d.model.blocks))`);
+    const count = async (word) => (((await bodyText()).match(/"text":"[^"]*"/g) || []).join(" ").match(new RegExp(word, "gi")) || []).length;
+    const paragraphs = await count("paragraph");
+    const waitForCount = async (word, n) => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        if ((await count(word)) === n) return true;
+        await sleep(150);
+      }
+      console.log(`     "${word}" appears ${await count(word)} times`);
+      return false;
+    };
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "h", code: "KeyH", windowsVirtualKeyCode: 72, modifiers: 2 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "h", code: "KeyH", windowsVirtualKeyCode: 72, modifiers: 2 });
+    check(await waitFor(`!document.getElementById("find-bar").hidden && !document.getElementById("replace-row").hidden`), "Ctrl+H opens find and replace");
+    await evaluate(`(() => { const i = document.getElementById("find-input"); i.focus(); i.value = "PARAGRAPH"; i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    check(await waitFor(`document.getElementById("find-count").textContent === "1 of ${paragraphs}"`), `matches are counted (${paragraphs})`);
+    check(await evaluate(`!window.CSS?.highlights || CSS.highlights.get("find-matches")?.size === ${paragraphs}`), "matches are highlighted");
+    await press("Enter", "Enter", 13);
+    check(await waitFor(`document.getElementById("find-count").textContent === "2 of ${paragraphs}"`), "Enter moves to the next match");
+    await evaluate(`(() => { document.getElementById("find-word").checked = true; document.getElementById("find-word").dispatchEvent(new Event("change")); })()`);
+    await evaluate(`(() => { const r = document.getElementById("replace-input"); r.value = "section"; document.querySelector('[data-find="replace-all"]').click(); })()`);
+    check(await waitForCount("paragraph", 0), "Replace all replaces every match");
+    check((await count("section")) >= paragraphs, "the replacement text is in the document");
+    check(await waitFor(`document.getElementById("find-count").textContent === "No results"`), "no matches are left");
+    await evaluate(`document.querySelector('[data-action="undo"]').click()`);
+    check(await waitForCount("paragraph", paragraphs), "one Undo restores every replacement");
+    await evaluate(`(() => { const i = document.getElementById("find-input"); i.value = "paragraph"; i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    check(await waitFor(`document.getElementById("find-count").textContent === "1 of ${paragraphs}"`), "the matches are found again after undoing");
+    await evaluate(`document.querySelector('[data-find="replace"]').click()`);
+    check(await waitForCount("paragraph", paragraphs - 1), "Replace replaces one match");
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    check(await waitFor(`document.getElementById("find-bar").hidden`), "Escape closes the find bar");
+
     await caretIn(cellPara(1, 1), 0);
     await shot("word-document-table-desktop");
     await shot("word-document-table-narrow", 420, 860);

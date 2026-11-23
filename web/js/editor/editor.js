@@ -33,7 +33,8 @@ import {
   wordAt,
 } from "./content.js";
 import { containerBlocks, containerField, containerKey, parseContainerKey, parentKey } from "./containers.js";
-import { insertTextAtSelection, paragraphLength, parseParagraph, selectionInfo, setCaret, setSelection } from "./dom.js";
+import { insertTextAtSelection, paragraphLength, parseParagraph, positionAt, selectionInfo, setCaret, setSelection } from "./dom.js";
+import { findMatches, replaceEdits } from "./find.js";
 import { renderBlocks, renderHeaderFooter } from "./render.js";
 
 /** How long typing must pause before the change is sent. */
@@ -561,6 +562,52 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       });
   }
 
+  /** A DOM range for a find match ({key, block, start, end}), or null. */
+  function matchRange(match) {
+    const el = blockEl(match.block, match.key);
+    if (!el || el.dataset.kind !== "paragraph") return null;
+    const length = paragraphLength(el);
+    const a = positionAt(el, Math.min(match.start, length));
+    const b = positionAt(el, Math.min(match.end, length));
+    const range = root.ownerDocument.createRange();
+    range.setStart(a.node, a.offset);
+    range.setEnd(b.node, b.offset);
+    return range;
+  }
+
+  /** Selects a find match in the document and scrolls to it. */
+  function selectMatch(match) {
+    const el = blockEl(match.block, match.key);
+    if (!el) return;
+    const host = hosts.find((h) => h.contains(el));
+    if (host) host.focus({ preventScroll: true });
+    setSelection(blockEl, { block: match.block, container: match.key, offset: match.start }, { block: match.block, container: match.key, offset: match.end });
+    el.scrollIntoView({ block: "nearest" });
+  }
+
+  /**
+   * Replaces matches of `query` with `replacement`: all of them, or only
+   * `only` (a match from findMatches). Matches are found again after
+   * pending typing is sent, and all replacements are one edit batch (one
+   * undo step). Resolves with the number replaced.
+   */
+  function replaceFound(query, options, replacement, only = null) {
+    let count = 0;
+    return runEdit(() => {
+      const all = findMatches(doc.model, query, options);
+      const chosen = only ? all.filter((m) => m.key === only.key && m.block === only.block && m.start === only.start) : all;
+      count = chosen.length;
+      if (!count) return null;
+      const last = chosen[chosen.length - 1];
+      return {
+        edits: replaceEdits(doc.model, chosen, replacement),
+        after: () => {
+          if (only) placeCaret(last.block, last.start + replacement.length, last.key);
+        },
+      };
+    }).then(() => count);
+  }
+
   /** Applies document-level edits (page setup, headers, footers, page numbers). */
   function applyDocumentEdits(edits, after) {
     return runEdit(() => ({ edits, after }));
@@ -766,6 +813,9 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     insertTable,
     tableCommand,
     applyDocumentEdits,
+    matchRange,
+    selectMatch,
+    replaceFound,
     undo: () => history("undo"),
     redo: () => history("redo"),
     placeCaret,
