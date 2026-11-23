@@ -791,7 +791,9 @@ impl Document {
     }
 
     /// Gives the body its final section properties if it has none.
+    /// Marks the main part edited (all section changes go through here).
     fn ensure_body_section(&mut self) {
+        self.modified = true;
         let w = self.w.clone();
         let body = self.body_mut();
         if body.child(&w.ns, "sectPr").is_none() {
