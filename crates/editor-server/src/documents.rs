@@ -6,6 +6,9 @@
 //! * `GET /api/documents/{id}` — the document's model.
 //! * `POST /api/documents/{id}/edits` — apply edits atomically (JSON
 //!   `{"base_revision": n, "edits": [...]}`) → the updated document.
+//! * `POST /api/documents/{id}/images` — upload a picture (PNG, JPEG, GIF or
+//!   BMP bytes) to insert with a later edit → `{id, format, width_px,
+//!   height_px}`.
 //! * `GET /api/documents/{id}/media/{part}` — an image the document shows.
 //! * `GET /api/documents/{id}/download?name=<file name>` — the saved `.docx`.
 //! * `DELETE /api/documents/{id}` — close the document.
@@ -39,6 +42,8 @@ pub const UNTITLED: &str = "Untitled document.docx";
 pub const MAX_EDIT_BYTES: usize = 8 << 20;
 /// Most edits in one request.
 pub const MAX_EDITS: usize = 1000;
+/// Largest picture accepted for insertion.
+pub const MAX_IMAGE_BYTES: usize = 25 << 20;
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const DOCM_MIME: &str = "application/vnd.ms-word.document.macroEnabled.12";
@@ -104,6 +109,7 @@ pub fn routes() -> Router<AppState> {
         .route("/{id}", get(fetch).delete(close))
         .route("/{id}/download", get(download))
         .route("/{id}/edits", post(edit).layer(DefaultBodyLimit::max(MAX_EDIT_BYTES)))
+        .route("/{id}/images", post(upload_image).layer(DefaultBodyLimit::max(MAX_IMAGE_BYTES)))
         .route("/{id}/media/{*part}", get(media))
 }
 
@@ -263,6 +269,43 @@ async fn edit(
     .await
     .map_err(|_| internal_error())??;
     Ok(Json(response))
+}
+
+async fn upload_image(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<(StatusCode, Json<docx_engine::media::StagedImageInfo>), ApiError> {
+    let bytes = body.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "image_too_large",
+                format!("The picture is larger than the {} MiB limit.", MAX_IMAGE_BYTES >> 20),
+            )
+        } else {
+            ApiError::new(StatusCode::BAD_REQUEST, "bad_request", "The picture could not be received.")
+        }
+    })?;
+    if bytes.is_empty() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "empty_file", "The picture file is empty."));
+    }
+    let entry = state.store().get(id)?;
+    let info = tokio::task::spawn_blocking(move || {
+        let mut doc = entry.lock().unwrap_or_else(|p| p.into_inner());
+        doc.document.stage_image(bytes.to_vec())
+    })
+    .await
+    .map_err(|_| internal_error())?
+    .map_err(|err| match err {
+        DocxError::InvalidEdit(_) => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_image",
+            "This picture can't be inserted. Use a PNG, JPEG, GIF or BMP file.",
+        ),
+        other => docx_error(other),
+    })?;
+    Ok((StatusCode::CREATED, Json(info)))
 }
 
 /// Image types the browser can display. SVG is excluded: served from this

@@ -320,3 +320,89 @@ async fn formatting_edits_apply_through_the_api() {
     let saved = Document::open(&client.download(id).await).unwrap().model();
     assert_eq!(saved.lists.len(), 1);
 }
+
+/// A 1×1 PNG.
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49,
+    0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0, 0x1F, 0x00, 0x05, 0x00, 0x01, 0xFF, 0x89, 0x99, 0x3D,
+    0x1D, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+#[tokio::test]
+async fn pictures_are_uploaded_then_inserted_and_served() {
+    let client = Client::new();
+    let id = client.new_document().await;
+    let res = client.send(Method::POST, &format!("/api/documents/{id}/images"), "image/png", PNG.to_vec()).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{:?}", String::from_utf8_lossy(&res.body));
+    let info = res.json();
+    assert_eq!((info["format"].as_str(), info["width_px"].as_u64()), (Some("png"), Some(1)));
+    let image = info["id"].as_str().unwrap().to_string();
+
+    let res = client
+        .edit(
+            id,
+            json!({"base_revision": 0, "edits": [{"op": "splice", "first": 0, "last": 0, "content": [
+                {"type": "image", "image": image, "width_emu": 95250, "height_emu": 95250, "description": "Dot"}
+            ]}]}),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", String::from_utf8_lossy(&res.body));
+    let part = find_image_part(&res.json()["model"]).expect("the picture is in the model");
+    let res = client.send(Method::GET, &format!("/api/documents/{id}/media/{part}"), "application/json", vec![]).await;
+    assert_eq!((res.status, res.body.as_slice()), (StatusCode::OK, PNG));
+    assert_eq!(Document::open(&client.download(id).await).unwrap().model().stats.images, 1);
+
+    for (body, status) in [
+        (b"not a picture".to_vec(), StatusCode::UNPROCESSABLE_ENTITY),
+        (Vec::new(), StatusCode::BAD_REQUEST),
+        (vec![0u8; MAX_IMAGE + 1], StatusCode::PAYLOAD_TOO_LARGE),
+    ] {
+        let res = client.send(Method::POST, &format!("/api/documents/{id}/images"), "image/png", body).await;
+        assert_eq!(res.status, status);
+        assert!(res.json()["error"]["message"].is_string());
+    }
+    let res = client.send(Method::POST, "/api/documents/999/images", "image/png", PNG.to_vec()).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+const MAX_IMAGE: usize = docx_editor::documents::MAX_IMAGE_BYTES;
+
+#[tokio::test]
+async fn tables_headers_and_page_setup_through_the_api() {
+    let client = Client::new();
+    let id = client.new_document().await;
+    let res = client
+        .edit(
+            id,
+            json!({"base_revision": 0, "edits": [
+                {"op": "insert_table", "at": 1, "rows": 2, "columns": 2},
+                {"op": "splice", "container": {"cell": {"table": 1, "row": 0, "cell": 1}}, "first": 0, "last": 0,
+                 "content": [{"type": "text", "text": "Cell text"}]},
+                {"op": "insert_page_numbers", "kind": "footer", "alignment": "right"},
+                {"op": "format_section", "format": {"landscape": true}}
+            ]}),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", String::from_utf8_lossy(&res.body));
+    let model = &res.json()["model"];
+    assert_eq!(model["blocks"][1]["rows"][0]["cells"][1]["blocks"][0]["inlines"][0]["content"][0]["text"], "Cell text");
+    assert_eq!(model["section"]["landscape"], true);
+    let footer = &model["footer"];
+    assert_eq!(footer["part"], "word/footer1.xml");
+    assert_eq!(footer["blocks"][0]["inlines"][0]["field"], "PAGE");
+
+    // The footer is edited through its part.
+    let res = client
+        .edit(
+            id,
+            json!({"base_revision": 1, "edits": [{"op": "splice", "container": {"part": "word/footer1.xml"}, "first": 0, "last": 0,
+                "content": [{"type": "text", "text": "Page "}, {"type": "keep", "block": 0, "inline": 0}]}]}),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{:?}", String::from_utf8_lossy(&res.body));
+    let saved = Document::open(&client.download(id).await).unwrap().model();
+    let Some(footer) = saved.footer else { panic!("footer saved") };
+    let docx_engine::model::Block::Paragraph(p) = &footer.blocks[0] else { panic!() };
+    assert_eq!(p.plain_text(), "Page 1");
+}
