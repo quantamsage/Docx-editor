@@ -92,6 +92,96 @@ pub const RPR_ORDER: &[&str] = &[
     "rPrChange",
 ];
 
+/// Child order of `w:sectPr` (CT_SectPr). Header and footer references are
+/// a choice group at the start and may appear in any order among
+/// themselves; [`insert_reference`] handles them.
+pub const SECTPR_ORDER: &[&str] = &[
+    "headerReference",
+    "footerReference",
+    "footnotePr",
+    "endnotePr",
+    "type",
+    "pgSz",
+    "pgMar",
+    "paperSrc",
+    "pgBorders",
+    "lnNumType",
+    "pgNumType",
+    "cols",
+    "formProt",
+    "vAlign",
+    "noEndnote",
+    "titlePg",
+    "textDirection",
+    "bidi",
+    "rtlGutter",
+    "docGrid",
+    "printerSettings",
+    "sectPrChange",
+];
+
+/// Child order of `w:tblPr` (CT_TblPr).
+pub const TBLPR_ORDER: &[&str] = &[
+    "tblStyle",
+    "tblpPr",
+    "tblOverlap",
+    "bidiVisual",
+    "tblStyleRowBandSize",
+    "tblStyleColBandSize",
+    "tblW",
+    "jc",
+    "tblCellSpacing",
+    "tblInd",
+    "tblBorders",
+    "shd",
+    "tblLayout",
+    "tblCellMar",
+    "tblLook",
+    "tblCaption",
+    "tblDescription",
+    "tblPrChange",
+];
+
+/// Child order of `w:tcPr` (CT_TcPr).
+pub const TCPR_ORDER: &[&str] = &[
+    "cnfStyle",
+    "tcW",
+    "gridSpan",
+    "hMerge",
+    "vMerge",
+    "tcBorders",
+    "shd",
+    "noWrap",
+    "tcMar",
+    "textDirection",
+    "tcFitText",
+    "vAlign",
+    "hideMark",
+    "headers",
+    "cellIns",
+    "cellDel",
+    "cellMerge",
+    "tcPrChange",
+];
+
+/// Child order of `w:tblBorders` (CT_TblBorders, with the 2010 start/end
+/// spellings next to left/right).
+pub const TBLBORDERS_ORDER: &[&str] = &["top", "left", "start", "bottom", "right", "end", "insideH", "insideV"];
+
+/// Adds a `w:headerReference`/`w:footerReference` to a `w:sectPr`, after
+/// the references it already has and before everything else.
+pub fn insert_reference(sect: &mut Element, w: &WNames, reference: Element) {
+    let at = sect
+        .children
+        .iter()
+        .position(|n| match n {
+            Node::Element(e) => !(e.is(&w.ns, "headerReference") || e.is(&w.ns, "footerReference")),
+            _ => false,
+        })
+        .unwrap_or(sect.children.len());
+    sect.children.insert(at, Node::Element(reference));
+}
+
 /// Names used to create elements in the document's WordprocessingML
 /// namespace with the prefix it already declares.
 ///
@@ -260,8 +350,7 @@ mod tests {
 
     #[test]
     fn order_list_has_no_duplicates() {
-        {
-            let order = PPR_ORDER;
+        for order in [PPR_ORDER, RPR_ORDER, SECTPR_ORDER, TBLPR_ORDER, TCPR_ORDER, TBLBORDERS_ORDER] {
             let mut seen = std::collections::HashSet::new();
             assert!(order.iter().all(|n| seen.insert(*n)));
         }

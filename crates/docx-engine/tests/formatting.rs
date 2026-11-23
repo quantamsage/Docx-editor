@@ -57,6 +57,7 @@ fn run_formatting_sets_properties_in_schema_order_and_keeps_the_rest() {
         ..RunFormat::default()
     };
     doc.splice(&Splice {
+        container: Default::default(),
         first: 1,
         last: 1,
         content: vec![keep(1, 0), keep(1, 1), formatted(" this quarter", (1, 2), all)],
@@ -87,8 +88,13 @@ fn run_formatting_sets_properties_in_schema_order_and_keeps_the_rest() {
 fn run_formatting_can_turn_off_and_remove_properties() {
     let mut doc = open();
     let off = RunFormat { bold: Some(false), color: Some(None), ..RunFormat::default() };
-    doc.splice(&Splice { first: 1, last: 1, content: vec![keep(1, 0), formatted("12%", (1, 1), off), keep(1, 2)] })
-        .unwrap();
+    doc.splice(&Splice {
+        container: Default::default(),
+        first: 1,
+        last: 1,
+        content: vec![keep(1, 0), formatted("12%", (1, 1), off), keep(1, 2)],
+    })
+    .unwrap();
     let model = round_trip(&doc);
     let props = run_props(paragraph(&model, 1), 1);
     assert_eq!((props.bold, props.color.as_deref()), (Some(false), None));
@@ -97,7 +103,13 @@ fn run_formatting_can_turn_off_and_remove_properties() {
     // Removing every property drops the empty rPr.
     let mut doc = open();
     let none = RunFormat { bold: Some(true), ..RunFormat::default() };
-    doc.splice(&Splice { first: 0, last: 0, content: vec![formatted("Quarterly Report", (0, 0), none)] }).unwrap();
+    doc.splice(&Splice {
+        container: Default::default(),
+        first: 0,
+        last: 0,
+        content: vec![formatted("Quarterly Report", (0, 0), none)],
+    })
+    .unwrap();
     assert!(main_xml(&doc).contains(r#"<w:r><w:rPr><w:b/></w:rPr><w:t>Quarterly Report</w:t></w:r>"#));
 }
 
@@ -112,7 +124,12 @@ fn invalid_run_formats_are_rejected() {
     ] {
         let mut doc = open();
         let err = doc
-            .splice(&Splice { first: 0, last: 0, content: vec![formatted("x", (0, 0), format.clone())] })
+            .splice(&Splice {
+                container: Default::default(),
+                first: 0,
+                last: 0,
+                content: vec![formatted("x", (0, 0), format.clone())],
+            })
             .unwrap_err();
         assert!(matches!(err, docx_engine::DocxError::InvalidEdit(_)), "{format:?}");
         assert!(!doc.is_modified());
@@ -279,6 +296,7 @@ fn failed_batches_roll_back_secondary_parts() {
     let before = doc.save().unwrap();
     let edits = vec![
         Edit::FormatParagraphs {
+            container: Default::default(),
             first: 0,
             last: 0,
             format: ParagraphFormat {

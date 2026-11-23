@@ -32,7 +32,7 @@ fn t(text: &str, like: Option<(usize, usize)>) -> Piece {
 }
 
 fn splice(doc: &mut Document, first: usize, last: usize, content: Vec<Piece>) -> docx_engine::Result<()> {
-    doc.splice(&Splice { first, last, content })
+    doc.splice(&Splice { first, last, content, ..Splice::default() })
 }
 
 fn main_xml(doc: &Document) -> String {
@@ -264,7 +264,12 @@ fn apply_is_atomic() {
     let mut doc = open();
     let before = doc.model();
     let edits = vec![
-        Edit::Splice(Splice { first: 0, last: 0, content: vec![t("Changed", Some((0, 0)))] }),
+        Edit::Splice(Splice {
+            container: Default::default(),
+            first: 0,
+            last: 0,
+            content: vec![t("Changed", Some((0, 0)))],
+        }),
         Edit::DeleteBlock { block: 99 },
     ];
     let err = doc.apply(&edits).unwrap_err().to_string();
@@ -297,6 +302,7 @@ fn edits_deserialize_from_json() {
     assert_eq!(
         edits[0],
         Edit::Splice(Splice {
+            container: Default::default(),
             first: 1,
             last: 2,
             content: vec![keep(1, 0), t("hi", Some((1, 1))), t("plain", None), Piece::Break],

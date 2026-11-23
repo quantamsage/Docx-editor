@@ -22,6 +22,21 @@ pub struct DocumentModel {
     pub warnings: Vec<String>,
     /// List definitions from the numbering part, for drawing list markers.
     pub lists: Vec<crate::numbering::ListDefinition>,
+    /// The header and footer shown on the pages of the last section (its
+    /// default header and footer, possibly inherited from an earlier
+    /// section), with their content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<HeaderFooter>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer: Option<HeaderFooter>,
+}
+
+/// A header or footer part and its content. Its blocks are addressed with
+/// `Container { part: Some(part), .. }` in edits.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HeaderFooter {
+    pub part: String,
+    pub blocks: Vec<Block>,
 }
 
 /// Counts shown to the user after opening a document.
@@ -169,6 +184,9 @@ pub enum Inline {
     Other {
         kind: String,
         text: String,
+        /// For a simple field (`w:fldSimple`), its field type, e.g. `PAGE`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
     },
 }
 
@@ -254,6 +272,13 @@ pub struct Image {
 pub struct Table {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub style_id: Option<String>,
+    /// Column widths in twips (`w:tblGrid`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub grid: Vec<u32>,
+    /// Borders set on the table itself: `true` when any is visible, `false`
+    /// when all are switched off, absent when the table style decides.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub borders: Option<bool>,
     pub rows: Vec<TableRow>,
 }
 
@@ -269,6 +294,11 @@ pub struct TableCell {
     /// Vertical merge: `restart` begins a merged cell, `continue` extends it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vertical_merge: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_align: Option<crate::format::VerticalAlign>,
+    /// Background colour, hex RGB without `#`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shading: Option<String>,
     pub blocks: Vec<Block>,
 }
 
@@ -295,6 +325,9 @@ pub struct Section {
     pub margin_footer: Option<i32>,
     #[serde(skip_serializing_if = "is_false")]
     pub title_page: bool,
+    /// The number of the section's first page, if it restarts numbering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_number_start: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

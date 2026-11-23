@@ -137,7 +137,7 @@ fn parses_hyperlinks_images_and_preserved_content() {
         .inlines
         .iter()
         .flat_map(|i| match i {
-            Inline::Other { kind, text } => vec![format!("{kind}:{text}")],
+            Inline::Other { kind, text, .. } => vec![format!("{kind}:{text}")],
             Inline::Run(r) => r
                 .content
                 .iter()

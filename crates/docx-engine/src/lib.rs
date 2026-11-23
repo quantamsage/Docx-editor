@@ -14,20 +14,23 @@
 //! This crate has no knowledge of HTTP or async runtimes.
 
 mod blank;
+pub mod check;
 mod document;
 pub mod edit;
 pub mod error;
 pub mod format;
+pub mod media;
 pub mod model;
 pub mod numbering;
 pub mod opc;
 pub mod package;
 mod props;
 mod read;
+pub mod table;
 pub mod xml;
 
 pub use document::Document;
-pub use edit::{Edit, InlineRef, Piece, Splice};
+pub use edit::{CellRef, Container, Edit, HeaderFooterKind, InlineRef, Piece, Splice};
 pub use error::{DocxError, Result};
 pub use model::DocumentModel;
 pub use package::{Compression, Limits, Package, Part};

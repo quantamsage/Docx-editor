@@ -114,3 +114,45 @@ pub fn part_text(bytes: &[u8], name: &str) -> String {
     let (_, data, _) = read_parts(bytes).into_iter().find(|(n, _, _)| n == name).expect("part exists");
     String::from_utf8(data).unwrap()
 }
+
+/// Checks a saved document: it reopens, and its main document, headers and
+/// footers have no schema-order or structure problems Word would reject.
+pub fn assert_valid_docx(bytes: &[u8]) {
+    docx_engine::Document::open(bytes).expect("saved document reopens");
+    for (name, data, _) in read_parts(bytes) {
+        let is_word_xml = name.starts_with("word/")
+            && name.ends_with(".xml")
+            && (name.contains("document") || name.contains("header") || name.contains("footer"));
+        if is_word_xml {
+            let doc = docx_engine::xml::XmlDocument::parse(&data).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let mut problems = docx_engine::check::problems(&doc, W);
+            // The representative document deliberately has one run whose
+            // properties are out of order; edits must not add new problems.
+            if name == "word/document.xml" {
+                let original = docx_engine::xml::XmlDocument::parse(DOCUMENT_XML.as_bytes()).unwrap();
+                for known in docx_engine::check::problems(&original, W) {
+                    if let Some(i) = problems.iter().position(|p| *p == known) {
+                        problems.remove(i);
+                    }
+                }
+            }
+            assert!(problems.is_empty(), "{name}: {problems:?}");
+        }
+    }
+}
+
+/// Parts whose bytes differ between two archives (and parts only in one).
+pub fn changed_parts(before: &[u8], after: &[u8]) -> Vec<String> {
+    let before = read_parts(before);
+    let after = read_parts(after);
+    let mut changed: Vec<String> = after
+        .iter()
+        .filter(|(name, data, _)| before.iter().find(|(n, _, _)| n == name).is_none_or(|(_, d, _)| d != data))
+        .map(|(name, _, _)| name.clone())
+        .collect();
+    changed.extend(
+        before.iter().filter(|(n, _, _)| !after.iter().any(|(m, _, _)| m == n)).map(|(n, _, _)| format!("-{n}")),
+    );
+    changed.sort();
+    changed
+}

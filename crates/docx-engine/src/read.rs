@@ -75,7 +75,8 @@ impl ReadContext<'_> {
 }
 
 /// Indices into `body.children` of the elements that are blocks: every
-/// element except the final `sectPr` and invisible markers.
+/// element except the final `sectPr`, a cell's `tcPr` and invisible markers.
+/// Works for the body, a table cell and a header or footer.
 pub fn block_positions(body: &Element, w: &str) -> Vec<usize> {
     body.children
         .iter()
@@ -90,7 +91,7 @@ pub fn block_positions(body: &Element, w: &str) -> Vec<usize> {
 fn is_block(el: &Element, w: &str) -> bool {
     if el.namespace.as_deref() == Some(w) {
         let local = el.local_name();
-        return local != "sectPr" && !BODY_MARKERS.contains(&local);
+        return local != "sectPr" && local != "tcPr" && !BODY_MARKERS.contains(&local);
     }
     true
 }
@@ -130,13 +131,16 @@ pub fn read_document(doc: &XmlDocument, ctx: &ReadContext<'_>) -> DocumentModel 
         stats,
         warnings: Vec::new(),
         lists: Vec::new(),
+        header: None,
+        footer: None,
     }
 }
 
-fn read_blocks(container: &Element, ctx: &ReadContext<'_>, stats: &mut Stats) -> Vec<Block> {
+/// The blocks of a container (body, cell, header or footer).
+pub fn read_blocks(container: &Element, ctx: &ReadContext<'_>, stats: &mut Stats) -> Vec<Block> {
     let mut blocks = Vec::new();
     for el in container.elements() {
-        if !is_block(el, ctx.w) || el.is(ctx.w, "tcPr") {
+        if !is_block(el, ctx.w) {
             continue;
         }
         let block = if el.is(ctx.w, "p") {
@@ -181,7 +185,12 @@ fn read_paragraph(p: &Element, ctx: &ReadContext<'_>, stats: &mut Stats) -> Para
             let visible = visible_text(el, ctx.w);
             text.push(' ');
             text.push_str(&visible);
-            Inline::Other { kind: el.local_name().to_string(), text: visible }
+            let field = el
+                .is(ctx.w, "fldSimple")
+                .then(|| ctx.w_attr(el, "instr"))
+                .flatten()
+                .and_then(|instr| instr.split_whitespace().next().map(str::to_ascii_uppercase));
+            Inline::Other { kind: el.local_name().to_string(), text: visible, field }
         };
         paragraph.inlines.push(inline);
     }
@@ -343,7 +352,20 @@ fn find_descendant<'e>(el: &'e Element, local: &str) -> Option<&'e Element> {
 
 fn read_table(tbl: &Element, ctx: &ReadContext<'_>, stats: &mut Stats) -> Table {
     let w = ctx.w;
-    let style_id = tbl.child(w, "tblPr").and_then(|p| p.child(w, "tblStyle")).and_then(|e| ctx.w_val(e));
+    let tbl_pr = tbl.child(w, "tblPr");
+    let style_id = tbl_pr.and_then(|p| p.child(w, "tblStyle")).and_then(|e| ctx.w_val(e));
+    let grid = tbl
+        .child(w, "tblGrid")
+        .map(|g| {
+            g.elements()
+                .filter(|c| c.is(w, "gridCol"))
+                .map(|c| ctx.w_attr(c, "w").and_then(|v| v.parse::<f64>().ok()).map_or(0, |v| v.max(0.0) as u32))
+                .collect()
+        })
+        .unwrap_or_default();
+    let borders = tbl_pr
+        .and_then(|p| p.child(w, "tblBorders"))
+        .map(|b| b.elements().any(|side| ctx.w_val(side).is_some_and(|v| v != "nil" && v != "none")));
     let rows = tbl
         .elements()
         .filter(|e| e.is(w, "tr"))
@@ -361,12 +383,21 @@ fn read_table(tbl: &Element, ctx: &ReadContext<'_>, stats: &mut Stats) -> Table 
                     let vertical_merge = tc_pr
                         .and_then(|p| p.child(w, "vMerge"))
                         .map(|e| ctx.w_val(e).unwrap_or_else(|| "continue".to_string()));
-                    TableCell { span, vertical_merge, blocks: read_blocks(tc, ctx, stats) }
+                    let vertical_align = tc_pr
+                        .and_then(|p| p.child(w, "vAlign"))
+                        .and_then(|e| ctx.w_val(e))
+                        .and_then(|v| crate::format::VerticalAlign::from_ooxml(&v));
+                    let shading = tc_pr
+                        .and_then(|p| p.child(w, "shd"))
+                        .and_then(|e| ctx.w_attr(e, "fill"))
+                        .filter(|f| f.len() == 6 && f.chars().all(|c| c.is_ascii_hexdigit()))
+                        .map(|f| f.to_ascii_uppercase());
+                    TableCell { span, vertical_merge, vertical_align, shading, blocks: read_blocks(tc, ctx, stats) }
                 })
                 .collect(),
         })
         .collect();
-    Table { style_id, rows }
+    Table { style_id, grid, borders, rows }
 }
 
 fn read_section(sect: &Element, ctx: &ReadContext<'_>) -> Section {
@@ -387,6 +418,8 @@ fn read_section(sect: &Element, ctx: &ReadContext<'_>) -> Section {
         section.margin_footer = num("footer");
     }
     section.title_page = sect.child(w, "titlePg").is_some_and(|e| is_on(ctx.w_val(e).as_deref()));
+    section.page_number_start =
+        sect.child(w, "pgNumType").and_then(|e| ctx.w_attr(e, "start")).and_then(|v| v.parse().ok());
     section
 }
 

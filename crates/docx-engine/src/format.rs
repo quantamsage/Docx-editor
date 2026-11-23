@@ -85,7 +85,7 @@ impl RunFormat {
             return invalid("font sizes must be between 1 and 1638 points");
         }
         if let Some(Some(color)) = &self.color
-            && !(color.len() == 6 && color.chars().all(|c| c.is_ascii_hexdigit()))
+            && !is_hex_color(color)
         {
             return invalid("colours must be six hexadecimal digits");
         }
@@ -372,4 +372,212 @@ pub fn apply_paragraph_format(p: &mut Element, w: &WNames, f: &ParagraphFormat, 
         }
         _ => {}
     }
+}
+
+/// Vertical alignment of a cell's content (`w:vAlign`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerticalAlign {
+    Top,
+    Center,
+    Bottom,
+}
+
+impl VerticalAlign {
+    pub fn from_ooxml(value: &str) -> Option<Self> {
+        match value {
+            "top" => Some(Self::Top),
+            "center" => Some(Self::Center),
+            "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+
+    pub fn to_ooxml(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Center => "center",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
+/// A change to a table cell's properties.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CellFormat {
+    #[serde(default, deserialize_with = "nullable")]
+    pub vertical_align: Option<Option<VerticalAlign>>,
+    /// Background colour, hex RGB without `#`.
+    #[serde(default, deserialize_with = "nullable")]
+    pub shading: Option<Option<String>>,
+}
+
+impl CellFormat {
+    pub fn validate(&self) -> Result<()> {
+        if let Some(Some(color)) = &self.shading
+            && !is_hex_color(color)
+        {
+            return Err(DocxError::InvalidEdit("colours must be six hexadecimal digits".into()));
+        }
+        Ok(())
+    }
+}
+
+fn is_hex_color(color: &str) -> bool {
+    color.len() == 6 && color.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Paper size in twips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PageSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Page margins in twips. Omitted sides are unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Margins {
+    #[serde(default)]
+    pub top: Option<u32>,
+    #[serde(default)]
+    pub right: Option<u32>,
+    #[serde(default)]
+    pub bottom: Option<u32>,
+    #[serde(default)]
+    pub left: Option<u32>,
+}
+
+/// A change to the page layout of the document's sections.
+///
+/// * `size`: the paper size; its orientation follows `landscape` (or the
+///   section's current orientation when `landscape` is absent).
+/// * `landscape`: turns pages sideways (width and height are swapped as
+///   needed).
+/// * `page_number_start`: the number of the first page (`null` continues
+///   from the previous section, Word's default).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SectionFormat {
+    #[serde(default)]
+    pub size: Option<PageSize>,
+    #[serde(default)]
+    pub landscape: Option<bool>,
+    #[serde(default)]
+    pub margins: Option<Margins>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub page_number_start: Option<Option<u32>>,
+}
+
+/// Smallest and largest page dimension Word accepts (0.25 in to 22 in).
+pub const PAGE_DIMENSION_RANGE: std::ops::RangeInclusive<u32> = 360..=31680;
+
+impl SectionFormat {
+    pub fn validate(&self) -> Result<()> {
+        let invalid = |msg: &str| Err(DocxError::InvalidEdit(msg.to_string()));
+        if let Some(size) = self.size
+            && !(PAGE_DIMENSION_RANGE.contains(&size.width) && PAGE_DIMENSION_RANGE.contains(&size.height))
+        {
+            return invalid("page sizes must be between 0.25 and 22 inches");
+        }
+        if let Some(m) = self.margins {
+            for v in [m.top, m.right, m.bottom, m.left].into_iter().flatten() {
+                if v > 31680 {
+                    return invalid("margins must be at most 22 inches");
+                }
+            }
+        }
+        if let Some(Some(start)) = self.page_number_start
+            && start > 32767
+        {
+            return invalid("page numbers can start at most at 32767");
+        }
+        Ok(())
+    }
+}
+
+/// Applies a page layout change to one section's properties (`w:sectPr`),
+/// keeping everything else in them.
+pub fn apply_section_format(sect: &mut Element, w: &WNames, f: &SectionFormat) -> Result<()> {
+    use crate::props::SECTPR_ORDER;
+    let ns = w.ns.as_str();
+    let number = |el: Option<&Element>, name: &str| {
+        el.and_then(|e| e.attr(Some(ns), name)).and_then(|v| v.parse::<f64>().ok()).map(|v| v as i64)
+    };
+
+    if f.size.is_some() || f.landscape.is_some() {
+        let current = sect.child(ns, "pgSz");
+        let mut width = number(current, "w").unwrap_or(11906).clamp(1, 31680) as u32;
+        let mut height = number(current, "h").unwrap_or(16838).clamp(1, 31680) as u32;
+        let was_landscape =
+            current.and_then(|e| e.attr(Some(ns), "orient")).as_deref() == Some("landscape") || width > height;
+        if let Some(size) = f.size {
+            (width, height) = (size.width, size.height);
+        }
+        let landscape = f.landscape.unwrap_or(was_landscape);
+        let (short, long) = (width.min(height), width.max(height));
+        (width, height) = if landscape { (long, short) } else { (short, long) };
+        let pg = ensure_child(sect, w, SECTPR_ORDER, "pgSz");
+        w.set_attr(pg, "w", &width.to_string());
+        w.set_attr(pg, "h", &height.to_string());
+        if landscape {
+            w.set_attr(pg, "orient", "landscape");
+        } else {
+            pg.remove_attr(Some(ns), "orient");
+        }
+    }
+
+    if let Some(m) = f.margins {
+        let created = sect.child(ns, "pgMar").is_none();
+        let mar = ensure_child(sect, w, SECTPR_ORDER, "pgMar");
+        if created {
+            // Every page margin attribute is required by the schema.
+            for (name, value) in [
+                ("top", "1440"),
+                ("right", "1440"),
+                ("bottom", "1440"),
+                ("left", "1440"),
+                ("header", "708"),
+                ("footer", "708"),
+                ("gutter", "0"),
+            ] {
+                w.set_attr(mar, name, value);
+            }
+        }
+        for (name, value) in [("top", m.top), ("right", m.right), ("bottom", m.bottom), ("left", m.left)] {
+            if let Some(v) = value {
+                w.set_attr(mar, name, &v.to_string());
+            }
+        }
+    }
+
+    if f.size.is_some() || f.landscape.is_some() || f.margins.is_some() {
+        let pg = sect.child(ns, "pgSz");
+        let mar = sect.child(ns, "pgMar");
+        let width = number(pg, "w").unwrap_or(11906);
+        let height = number(pg, "h").unwrap_or(16838);
+        let side = |name: &str| number(mar, name).unwrap_or(1440).abs();
+        if side("left") + side("right") + 360 > width || side("top") + side("bottom") + 360 > height {
+            return Err(DocxError::InvalidEdit("the margins leave no room for text on the page".into()));
+        }
+    }
+
+    match f.page_number_start {
+        Some(Some(start)) => {
+            let el = ensure_child(sect, w, SECTPR_ORDER, "pgNumType");
+            w.set_attr(el, "start", &start.to_string());
+        }
+        Some(None) => {
+            if let Some(el) = sect.child_mut(ns, "pgNumType") {
+                el.remove_attr(Some(ns), "start");
+                if el.attributes().is_empty() && el.children.is_empty() {
+                    remove_child(sect, w, "pgNumType");
+                }
+            }
+        }
+        None => {}
+    }
+    Ok(())
 }
