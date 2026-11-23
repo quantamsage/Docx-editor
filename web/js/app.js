@@ -3,7 +3,8 @@
 import { closeDocument, downloadDocument, getHealth, newDocument, openDocument } from "./api.js";
 import { ensureDocxExtension, pageGeometry } from "./documents.js";
 import { createEditor } from "./editor/editor.js";
-import { createInsertTools } from "./editor/insert.js";
+import { enablePictureResizing } from "./editor/images.js";
+import { PICTURE_TYPES, createInsertTools } from "./editor/insert.js";
 import { createToolbar } from "./editor/toolbar.js";
 import { downloadBlob, pickFile, pickSaveLocation, supportsFileSystemAccess, writeToHandle } from "./files.js";
 import { connectionLabel, createConnectionMonitor, formatPagePosition, formatWordCount } from "./status.js";
@@ -289,6 +290,16 @@ function bindDragAndDrop() {
     workspace.classList.remove("is-drop-target");
     const file = event.dataTransfer.files[0];
     if (!file) return;
+    // A picture dropped on the page is inserted where it was dropped.
+    if (current && (PICTURE_TYPES.includes(file.type) || /\.(png|jpe?g|gif|bmp)$/i.test(file.name))) {
+      const caret = document.caretRangeFromPoint ? document.caretRangeFromPoint(event.clientX, event.clientY) : null;
+      if (caret && editor.hosts.some((h) => h.contains(caret.startContainer))) {
+        getSelection().removeAllRanges();
+        getSelection().addRange(caret);
+      }
+      insertTools.insertPicture(file);
+      return;
+    }
     if (!/\.(docx|docm|dotx|dotm)$/i.test(file.name)) {
       showNotice(`"${file.name}" is not a Word document (.docx).`);
       return;
@@ -321,7 +332,9 @@ function bindEditor() {
     insertBar: $("insert-tools"),
     tableBar: $("table-toolbar"),
     onInfo: (message) => showNotice(message, "warning"),
+    onError: (message) => showNotice(message),
   });
+  enablePictureResizing(editor);
   for (const host of editor.hosts) {
     host.addEventListener("keydown", (event) => toolbar.handleKey(event));
     // Typing changes the page count and the caret's page.

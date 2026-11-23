@@ -2,7 +2,14 @@
 // dialogs, and the contextual table toolbar shown while the cursor is in a
 // table. The edits themselves are built by the editor and tables.js.
 
+import { uploadImage } from "../api.js";
+import { pictureSize } from "../layout.js";
 import { TABLE_COMMANDS, hasBorders, tableEdits, tableSize } from "./tables.js";
+
+/** Picture types Word and browsers both display. */
+export const PICTURE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/bmp"];
+/** Largest picture accepted (as on the server). */
+export const MAX_PICTURE_BYTES = 25 * 1024 * 1024;
 
 /**
  * @param {object} options
@@ -10,8 +17,9 @@ import { TABLE_COMMANDS, hasBorders, tableEdits, tableSize } from "./tables.js";
  * @param {HTMLElement} options.insertBar  Holds the [data-insert] buttons.
  * @param {HTMLElement} options.tableBar  The table toolbar ([data-table] controls).
  * @param {(message: string) => void} options.onInfo
+ * @param {(message: string) => void} [options.onError]
  */
-export function createInsertTools({ editor, insertBar, tableBar, onInfo }) {
+export function createInsertTools({ editor, insertBar, tableBar, onInfo, onError = onInfo }) {
   const $ = (id) => document.getElementById(id);
   let state = null;
 
@@ -63,7 +71,41 @@ export function createInsertTools({ editor, insertBar, tableBar, onInfo }) {
     await editor.insertTable(size.rows, size.columns);
   }
 
-  const actions = { table: insertTable };
+  /** Uploads a picture file and inserts it at the cursor, fitted to the text width. */
+  async function insertPicture(file, range = saveSelection()) {
+    if (!editor.document || !file) return;
+    if (!PICTURE_TYPES.includes(file.type) && !/\.(png|jpe?g|gif|bmp)$/i.test(file.name || "")) {
+      onInfo(`"${file.name}" can't be inserted. Use a PNG, JPEG, GIF or BMP picture.`);
+      return;
+    }
+    if (file.size > MAX_PICTURE_BYTES) {
+      onInfo("The picture is larger than 25 MiB.");
+      return;
+    }
+    let info;
+    try {
+      info = await uploadImage(editor.document.id, file);
+    } catch (err) {
+      onError(err.message || String(err));
+      return;
+    }
+    restoreSelection(range);
+    const size = pictureSize(info.width_px, info.height_px, editor.document.model.section);
+    const description = (file.name || "").replace(/\.[^.]+$/, "");
+    await editor.insertImage({ image: info.id, ...size, description });
+  }
+
+  function choosePicture() {
+    const range = saveSelection();
+    const input = $("picture-input");
+    input.value = "";
+    input.onchange = () => {
+      if (input.files && input.files[0]) insertPicture(input.files[0], range);
+    };
+    input.click();
+  }
+
+  const actions = { table: insertTable, picture: choosePicture };
 
   insertBar.addEventListener("mousedown", (event) => {
     if (event.target.closest("button[data-insert]")) event.preventDefault();
@@ -111,5 +153,5 @@ export function createInsertTools({ editor, insertBar, tableBar, onInfo }) {
     tableBar.querySelector('[data-table="delete-table"]').disabled = Boolean(state.cell.container);
   }
 
-  return { update, tableCommand, insertTable };
+  return { update, tableCommand, insertTable, insertPicture };
 }

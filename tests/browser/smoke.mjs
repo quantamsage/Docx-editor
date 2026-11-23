@@ -384,6 +384,48 @@ async function main() {
       "typing in the header changes the header",
     );
 
+    // Pictures: drop one on the page, resize it with its handle, delete it.
+    const model2 = () => serverModel(2);
+    const imagesIn = (m, block) => (m.blocks[block].inlines || []).flatMap((i) => i.content || []).filter((c) => c.type === "image");
+    await caretAt(0, (await evaluate(`document.querySelector('#doc-content > [data-block="0"]').textContent.length`)));
+    await evaluate(`(async () => {
+      const blob = await (await fetch("/api/documents/2/media/word/media/image1.png")).blob();
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], "chart.png", { type: "image/png" }));
+      const target = document.getElementById("workspace");
+      target.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    })()`);
+    check(await waitForModel(2, (m) => imagesIn(m, 0).length === 1, "picture"), "a dropped picture is inserted at the cursor");
+    const picture = imagesIn(await model2(), 0)[0];
+    check(picture.part !== "word/media/image1.png" && picture.description === "chart", `the picture is a new part with a description (${picture.part})`);
+    check(await waitFor(`[...document.querySelectorAll('#doc-content > [data-block="0"] .obj-image img')].some((img) => img.complete && img.naturalWidth > 0)`), "the new picture is displayed");
+
+    const box = await evaluate(`JSON.parse(JSON.stringify(document.querySelector('#doc-content > [data-block="0"] .obj-image img').getBoundingClientRect()))`);
+    const mouse = (type, x, y) => cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1 });
+    await mouse("mousePressed", box.x + box.width / 2, box.y + box.height / 2);
+    await mouse("mouseReleased", box.x + box.width / 2, box.y + box.height / 2);
+    check(await waitFor(`!!document.querySelector("#doc-content .obj-image.is-selected .resize-handle")`), "clicking a picture selects it and shows the resize handle");
+    const handle = await evaluate(`JSON.parse(JSON.stringify(document.querySelector(".resize-handle").getBoundingClientRect()))`);
+    const hx = handle.x + handle.width / 2;
+    const hy = handle.y + handle.height / 2;
+    await mouse("mousePressed", hx, hy);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: hx + 30, y: hy + 10, button: "left", buttons: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: hx + 60, y: hy + 20, button: "left", buttons: 1 });
+    await mouse("mouseReleased", hx + 60, hy + 20);
+    const wider = Math.round(box.width + 60) * 9525;
+    check(
+      await waitForModel(2, (m) => Math.abs((imagesIn(m, 0)[0]?.width_emu || 0) - wider) <= 9525 * 2, "resize"),
+      "dragging the handle resizes the picture in the document",
+    );
+    const resized = imagesIn(await model2(), 0)[0];
+    check(Math.abs(resized.height_emu / resized.width_emu - picture.height_emu / picture.width_emu) < 0.02, "resizing keeps the proportions");
+
+    const box2 = await evaluate(`JSON.parse(JSON.stringify(document.querySelector('#doc-content > [data-block="0"] .obj-image img').getBoundingClientRect()))`);
+    await mouse("mousePressed", box2.x + box2.width / 2, box2.y + box2.height / 2);
+    await mouse("mouseReleased", box2.x + box2.width / 2, box2.y + box2.height / 2);
+    await press("Delete", "Delete", 46);
+    check(await waitForModel(2, (m) => imagesIn(m, 0).length === 0, "delete picture"), "Delete removes a selected picture");
+
     if (process.env.SCREENSHOT) {
       await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
       const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });

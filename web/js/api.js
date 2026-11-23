@@ -172,3 +172,17 @@ export function applyEdits(id, baseRevision, edits, options = {}) {
 export function mediaUrl(id, part) {
   return `/api/documents/${encodeURIComponent(id)}/media/${part.split("/").map(encodeURIComponent).join("/")}`;
 }
+
+/**
+ * Uploads a picture to insert into the document with a later edit.
+ * @param {Blob} file  A PNG, JPEG, GIF or BMP file.
+ * @returns {Promise<{id: string, format: string, width_px: number, height_px: number}>}
+ */
+export function uploadImage(id, file, options = {}) {
+  return request(`/api/documents/${encodeURIComponent(id)}/images`, {
+    ...options,
+    method: "POST",
+    rawBody: file,
+    timeoutMs: DOCUMENT_TIMEOUT_MS,
+  });
+}
