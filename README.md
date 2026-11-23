@@ -2,7 +2,7 @@
 
 A local, web-based editor for Microsoft Word `.docx` documents. A Rust (Axum/Tokio) server runs on your computer and serves a Word-style interface built with plain HTML, CSS and JavaScript. Nothing is sent over the internet.
 
-> **Status: Phase 4 (formatting).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop), edit and format their text and paragraphs on a page with the document's real size and margins, and save them again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing content or formatting you didn't touch. Table editing, images, headers and footers, undo and find & replace come in later phases.
+> **Status: Phase 5 (advanced document features).** You can create a blank document, open existing `.docx` files (button, `Ctrl+O`, or drag and drop), edit and format their text and paragraphs, edit tables, insert and resize pictures, edit headers and footers, number pages, change the page setup and insert page breaks, and save the document again (`Ctrl+S`, `Ctrl+Shift+S` for Save As) without losing content or formatting you didn't touch. Undo, find & replace and draft recovery come in Phase 6.
 
 ## Requirements
 
@@ -42,7 +42,7 @@ What is preserved: everything. Parts of the file that were not edited are writte
 - **Enter** starts a new paragraph with the same paragraph style and properties (a heading continues as a heading), **Shift+Enter** inserts a line break, **Tab** a tab character.
 - **Backspace** at the start of a paragraph joins it to the previous one; **Delete** at the end joins the next one. Selecting across paragraphs and typing or deleting replaces the selection.
 - **Paste** inserts plain text; each line becomes a paragraph.
-- Images, hyperlinks, page breaks and preserved content are shown as protected objects: you can type around them and delete images or links, but not edit inside them yet. Fields (such as page numbers) and comment markers are always kept. Tables and content controls are shown read-only.
+- Pictures, hyperlinks, page breaks, fields and preserved content are shown as protected objects: you can type around them and delete pictures, links and page breaks, but not edit inside them. Field codes (such as page numbers) and comment markers are always kept. Content controls and tables nested inside tables are shown read-only.
 - Changes are applied to the document in the editor as you type. The title bar shows "Unsaved changes" until you save, and closing the tab asks first.
 
 ## Formatting
@@ -62,6 +62,25 @@ The formatting toolbar shows the formatting at the cursor and applies changes to
 
 Heading and title styles a document doesn't define are added to it with Word's standard look. Lists reuse the document's own bullet or numbered list where it has one; a document without lists gets a numbering definition added. Formatting is written as ordinary Word properties, so Word shows it the same way.
 
+## Tables, pictures and page layout
+
+The **Insert** group of the toolbar:
+
+| Button | What it does |
+| --- | --- |
+| Table | Inserts a table (choose rows and columns) at the cursor, spread over the text width with single borders. |
+| Picture | Inserts a PNG, JPEG, GIF or BMP picture at the cursor, scaled down to the text width if needed. You can also drop a picture file on the page. |
+| Page break | Starts a new page at the cursor (`Ctrl+Enter`). |
+| Header / Footer | Puts the cursor in the header or footer, adding an empty one if the document has none. Double-clicking the empty top or bottom margin does the same. |
+| Page numbers | Adds the page number (optionally "Page 1 of 3") to the footer or header, left, centred or right, and can set the first page's number. |
+| Page setup | Paper size (A4, Letter, Legal, A5, A3), orientation and margins (Normal, Narrow, Moderate, Wide or custom, in cm) for the whole document. |
+
+**Tables:** click in a cell to type in it; Enter starts a new paragraph in the cell, and the formatting toolbar works there as everywhere else. While the cursor is in a table the **Table** toolbar appears: insert a row above or below, a column left or right, delete the row, column or table, show or hide the borders, align the cell's text to the top, middle or bottom, and shade the cell. Column widths, merged cells, shading and alignment from Word are shown; inserting and deleting columns keeps the table's width.
+
+**Pictures:** click a picture to select it; drag the square handle at its corner to resize it (its proportions are kept), or press Delete to remove it.
+
+**Headers and footers** are shown in the top and bottom margins and edited like the main text (they are dimmed until you point at them). The editor shows the document's main header and footer; first-page and even-page headers are kept but not shown.
+
 ## Tests
 
 ```sh
@@ -71,7 +90,7 @@ cargo fmt --check              # formatting
 npm test                       # frontend unit tests (Node's built-in test runner; nothing to install)
 
 cargo build --release
-npm run test:browser           # drives the real interface in headless Edge/Chrome (typing, Enter/Backspace/Delete, formatting, editing a Word file)
+npm run test:browser           # drives the real interface in headless Edge/Chrome (typing, formatting, tables, pictures, headers, page setup, editing a Word file)
 ```
 
 Word compatibility checks (Windows with Microsoft Word installed):
@@ -85,6 +104,8 @@ cargo run -p docx-engine --example docx_tool -- edit tests/fixtures/word-sample.
 ./scripts/verify-with-word.ps1 tests/fixtures/word-sample.docx target/edited.docx
 ```
 
-`docx_tool` can also print a document's structure: `cargo run -p docx-engine --example docx_tool -- inspect <file.docx>`.
+`docx_tool` can also print a document's structure (`inspect <file.docx>`), check that its XML is in schema order (`check <file.docx>`), and apply edits as the editor sends them (`edit <in> <out> --stage picture.png --json edits.json`).
+
+The browser test can save screenshots (`SCREENSHOT_DIR=<folder>`) and the documents it edited (`SAVE_DIR=<folder>`), for checking them with `docx_tool check` and `scripts/verify-with-word.ps1`.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the application is organized.
