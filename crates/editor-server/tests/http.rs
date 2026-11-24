@@ -42,7 +42,8 @@ async fn serves_the_editor_page() {
     assert_eq!(res.status, StatusCode::OK);
     assert_eq!(res.header("content-type"), "text/html; charset=utf-8");
     for needle in [
-        "<title>Untitled document – DOCX Editor</title>",
+        "<title>DOCX Editor</title>",
+        r#"role="toolbar""#,
         r#"<script type="module" src="/static/js/app.js"></script>"#,
         r#"href="/static/css/app.css""#,
         r#"class="toolbar toolbar-main""#,
