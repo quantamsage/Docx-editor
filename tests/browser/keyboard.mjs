@@ -41,6 +41,23 @@ async function main() {
     await type("First line");
     check(await waitForModel((m) => JSON.stringify(m.blocks[0]).includes("First line")), "typing after New reaches the document");
 
+    // Enter in a dialog field confirms the dialog (it used to cancel it).
+    await evaluate(`document.querySelector('[data-insert="table"]').click()`);
+    check(await waitFor(`document.getElementById("table-dialog").open && document.activeElement.id === "table-columns"`), "the table dialog opens with the focus in its first field");
+    await press(...TAB);
+    check((await focused()) === "table-rows", "Tab moves to the next field of the dialog");
+    await press("Backspace", "Backspace", 8);
+    await type("2");
+    await press(...ENTER);
+    check(await waitForModel((m) => tableOf(m)?.rows.length === 2 && tableOf(m).rows[0].cells.length === 3), "Enter in a dialog field inserts the table");
+    check(await waitFor(`!document.getElementById("table-dialog").open && document.activeElement.closest?.("#doc-content") !== null`), "the focus returns to the document after the dialog");
+
+    // Escape closes dialogs and returns the focus to the document.
+    await evaluate(`document.querySelector('[data-insert="page-setup"]').click()`);
+    check(await waitFor(`document.getElementById("page-setup-dialog").open`), "Page setup opens");
+    await press(...ESCAPE);
+    check(await waitFor(`!document.getElementById("page-setup-dialog").open && document.activeElement.closest?.("#doc-content") !== null`), "Escape closes the dialog and returns to the document");
+
   } finally {
     await session.close();
   }

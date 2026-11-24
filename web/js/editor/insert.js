@@ -60,6 +60,19 @@ export function createInsertTools({ editor, insertBar, tableBar, onInfo, onError
     });
   }
 
+  // Enter in a field confirms the dialog. (The browser would submit the
+  // form with its first button, which is Cancel.)
+  for (const dialog of document.querySelectorAll("dialog.dialog")) {
+    dialog.addEventListener("keydown", (event) => {
+      const field = event.target;
+      if (event.key !== "Enter" || field.tagName !== "INPUT" || ["checkbox", "radio", "button", "submit"].includes(field.type)) return;
+      event.preventDefault();
+      const form = field.form;
+      const ok = form && form.querySelector('button[value="ok"]');
+      if (ok) form.requestSubmit(ok);
+    });
+  }
+
   // ----- Insert group -----
 
   async function insertTable() {
