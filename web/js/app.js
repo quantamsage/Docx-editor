@@ -81,16 +81,18 @@ async function findDrafts() {
   offerNextDraft();
 }
 
-function recoverDraft() {
+async function recoverDraft() {
   const chosen = offered.shift();
   offerNextDraft();
   if (!chosen || !confirmDiscard()) return;
-  return run(`Recovering ${chosen.name}…`, async () => {
+  const recovered = await run(`Recovering ${chosen.name}…`, async () => {
     const info = await openDocument(chosen.data, chosen.name);
     setCurrent(info, { draftId: chosen.id });
     current.unsaved = true;
-    showNotice(`“${chosen.name}” was recovered from its draft. Save it to keep the changes.`, "warning");
   });
+  if (!recovered) return;
+  focusEditor();
+  showNotice(`“${chosen.name}” was recovered from its draft. Save it to keep the changes.`, "warning");
 }
 
 function discardDraft() {
@@ -221,16 +223,19 @@ function hideNotice() {
 
 // ----- Actions -----
 
+/** Runs an action that opens, creates or saves a document; resolves with whether it succeeded. */
 async function run(label, action) {
-  if (busy) return;
+  if (busy) return false;
   busy = true;
   hideNotice();
   $("save-state").textContent = label;
   renderButtonsOnly();
   try {
     await action();
+    return true;
   } catch (err) {
     showNotice(err && err.message ? err.message : String(err));
+    return false;
   } finally {
     busy = false;
     renderDocument();
@@ -265,23 +270,23 @@ function setCurrent(info, { handle = null, isNew = false, draftId = null, closeP
   if (previous && closePrevious) closeDocument(previous.id).catch(() => {});
 }
 
-function createNew() {
+async function createNew() {
   if (!confirmDiscard()) return;
-  return run("Creating…", async () => {
-    setCurrent(await newDocument(), { isNew: true });
-    focusEditor();
-  });
+  // The page is shown when run() ends, so the cursor is put in it after.
+  if (await run("Creating…", async () => setCurrent(await newDocument(), { isNew: true }))) focusEditor();
 }
 
-function openFile(file, handle = null) {
+async function openFile(file, handle = null) {
   if (!confirmDiscard()) return;
-  return run(`Opening ${file.name}…`, async () => {
+  let warnings = [];
+  const opened = await run(`Opening ${file.name}…`, async () => {
     const info = await openDocument(file, file.name);
     setCurrent(info, { handle });
-    if (info.model.warnings && info.model.warnings.length) {
-      showNotice(info.model.warnings.join(" "), "warning");
-    }
+    warnings = info.model.warnings || [];
   });
+  if (!opened) return;
+  focusEditor();
+  if (warnings.length) showNotice(warnings.join(" "), "warning");
 }
 
 async function chooseAndOpen() {

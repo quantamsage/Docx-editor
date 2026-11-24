@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test \"tests/frontend/**/*.test.js\"",
-    "test:browser": "node tests/browser/smoke.mjs",
+    "test:browser": "node tests/browser/smoke.mjs && node tests/browser/keyboard.mjs",
     "test:perf": "node tests/browser/perf.mjs"
   }
 }
