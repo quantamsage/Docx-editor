@@ -416,8 +416,9 @@ body {
   border-radius: 0 0 3px 3px;
   pointer-events: none;
 }
-.hf-header:hover::after, .hf-header:focus::after { bottom: -16px; }
-.hf-footer:hover::after, .hf-footer:focus::after { top: -16px; border-radius: 3px 3px 0 0; }
+/* The label sits in the margin, outside the text, so it never covers it. */
+.hf-header:hover::after, .hf-header:focus::after { top: -18px; border-radius: 3px 3px 0 0; }
+.hf-footer:hover::after, .hf-footer:focus::after { bottom: -18px; }
 .hf[data-empty="true"] { cursor: default; }
 .obj-field { background: rgba(0, 0, 0, 0.06); border-radius: 2px; padding: 0 1px; }
 
@@ -516,6 +517,9 @@ body {
 .dialog-grid input:focus-visible,
 .dialog-grid select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
+/* While a document is opened or saved. */
+.app[aria-busy="true"] .workspace, .app[aria-busy="true"] .toolbar { cursor: progress; }
+
 /* Nothing moves for people who asked for less motion. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -525,3 +529,15 @@ body {
   }
 }
 
+/* Narrow windows and phones: each toolbar is one row that scrolls sideways
+   instead of wrapping into several rows above a small page. */
+@media (max-width: 860px) {
+  /* position: relative keeps the visually hidden labels inside the scrolling
+     toolbar; positioned outside it, they would widen the whole page. */
+  .toolbar { position: relative; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; padding: 0.2rem 0.25rem; }
+  .toolbar-group { flex: none; flex-wrap: nowrap; }
+  .findbar-row { row-gap: 0.25rem; }
+  .welcome { margin-top: 15%; padding: 0 0.5rem; }
+  /* The sheet is narrower than paper here: keep more of it for the text. */
+  .page.has-document .page-margins { padding-left: min(var(--margin-left), 5vw); padding-right: min(var(--margin-right), 5vw); }
+}

@@ -228,6 +228,16 @@ async function main() {
     check((await evaluate(`getComputedStyle(document.querySelector(".tool")).transitionDuration`)) === "0s", "reduced motion: no transitions");
     await cdp.send("Emulation.setEmulatedMedia", { features: [] });
 
+    // Phone width: the page fits the screen (no sideways scrolling) and the
+    // toolbars are single rows that scroll.
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await sleep(500);
+    const phone = await evaluate(`({ width: document.documentElement.scrollWidth, viewport: innerWidth, rows: [...document.querySelectorAll('[role="toolbar"]:not([hidden])')].map((t) => t.getBoundingClientRect().height) })`);
+    check(phone.width <= 390 && phone.viewport === 390, `phone width: no sideways scrolling (page ${phone.width}px, viewport ${phone.viewport}px)`);
+    check(phone.rows.every((h) => h < 48), `phone width: each toolbar is one row (${phone.rows.map(Math.round).join(", ")} px)`);
+    const table = await evaluate(`(() => { const t = document.querySelector("#doc-content table").getBoundingClientRect(); const c = document.getElementById("doc-content").getBoundingClientRect(); return [Math.round(t.right), Math.round(c.right)]; })()`);
+    check(table[0] <= table[1] + 1, `phone width: tables fit in the page (table ends at ${table[0]}px, text at ${table[1]}px)`);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   } finally {
     await session.close();
   }

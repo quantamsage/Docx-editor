@@ -240,6 +240,7 @@ function hideNotice() {
 async function run(label, action) {
   if (busy) return false;
   busy = true;
+  document.querySelector(".app").setAttribute("aria-busy", "true");
   hideNotice();
   $("save-state").textContent = label;
   renderButtonsOnly();
@@ -251,6 +252,7 @@ async function run(label, action) {
     return false;
   } finally {
     busy = false;
+    document.querySelector(".app").removeAttribute("aria-busy");
     renderDocument();
   }
 }

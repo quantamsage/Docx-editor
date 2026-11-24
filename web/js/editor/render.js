@@ -268,15 +268,17 @@ function renderTable(table, index, ctx) {
   if (!visible) el.classList.add("table-gridlines");
   const grid = table.grid || [];
   if (grid.length && grid.every((w) => w > 0)) {
+    const total = grid.reduce((a, b) => a + b, 0);
     const colgroup = document.createElement("colgroup");
     for (const width of grid) {
       const col = document.createElement("col");
-      col.style.width = `${twipsToPx(width)}px`;
+      // In proportion, so that the table can shrink to fit a narrow window.
+      col.style.width = `${((width / total) * 100).toFixed(3)}%`;
       colgroup.appendChild(col);
     }
     el.appendChild(colgroup);
     // Fitted to the text width when wider (Word lets such tables run into the margin).
-    el.style.width = `min(${twipsToPx(grid.reduce((a, b) => a + b, 0))}px, 100%)`;
+    el.style.width = `min(${twipsToPx(total)}px, 100%)`;
   }
   const { rowSpans } = tableLayout(table);
   (table.rows || []).forEach((row, r) => {
