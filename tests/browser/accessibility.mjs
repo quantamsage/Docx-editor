@@ -1,9 +1,10 @@
 // Keyboard and accessibility test: drives the interface with the keyboard
-// only, in headless Edge/Chrome, and checks focus, dialogs and what the
-// accessibility tree exposes.
+// only, in headless Edge/Chrome, and checks focus, dialogs, announcements,
+// what the accessibility tree exposes, text contrast in the light and dark
+// themes, and the layout at phone width.
 //
 //   cargo build --release
-//   node tests/browser/keyboard.mjs
+//   node tests/browser/accessibility.mjs
 
 import { checker, launch, sleep } from "./harness.mjs";
 
@@ -14,7 +15,7 @@ const SHIFT = 8;
 const CTRL = 2;
 
 async function main() {
-  const session = await launch({ port: 9335, name: "keyboard" });
+  const session = await launch({ port: 9335, name: "accessibility" });
   const { cdp, evaluate, waitFor, press, type, url } = session;
   const { check, failures } = checker();
   try {
@@ -163,6 +164,70 @@ async function main() {
     check(bold && (bold.properties || []).some((p) => p.name === "pressed"), "Bold exposes its pressed state");
     const shortcut = await evaluate(`document.querySelector('[data-format="bold"]').getAttribute("aria-keyshortcuts")`);
     check(shortcut === "Control+B", "toolbar buttons announce their keyboard shortcuts");
+
+    // Text contrast (WCAG AA, 4.5:1) of the interface in both themes. The
+    // colour and background are measured as drawn, through transparent
+    // backgrounds and opacity.
+    const contrast = (selectors) =>
+      evaluate(`(() => {
+        const parse = (c) => { const m = c.match(/[\\d.]+/g).map(Number); return { r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1 }; };
+        const over = (top, bottom) => ({ r: top.r * top.a + bottom.r * (1 - top.a), g: top.g * top.a + bottom.g * (1 - top.a), b: top.b * top.a + bottom.b * (1 - top.a), a: 1 });
+        const background = (el) => {
+          const layers = [];
+          for (let n = el; n; n = n.parentElement) {
+            const c = parse(getComputedStyle(n).backgroundColor);
+            if (c.a > 0) layers.push(c);
+            if (c.a >= 1) break;
+          }
+          return layers.reverse().reduce((acc, c) => over(c, acc), { r: 255, g: 255, b: 255, a: 1 });
+        };
+        const lum = ({ r, g, b }) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+        const out = [];
+        for (const selector of ${JSON.stringify(selectors)}) {
+          for (const el of document.querySelectorAll(selector)) {
+            if (!el.getClientRects().length || !el.textContent.trim()) continue;
+            let opacity = 1;
+            for (let n = el; n; n = n.parentElement) opacity *= Number(getComputedStyle(n).opacity);
+            const bg = background(el);
+            const fg = over({ ...parse(getComputedStyle(el).color), a: parse(getComputedStyle(el).color).a * opacity }, bg);
+            const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+            out.push([selector, Math.round(((a + 0.05) / (b + 0.05)) * 100) / 100]);
+            break;
+          }
+        }
+        return out;
+      })()`);
+    const TEXT = [".titlebar-app", "#document-name", "#save-state", ".toolbar-main .tool:not(:disabled) .tool-label", "#style-select:not(:disabled)", "#status-words", "#status-connection-text", "#notice-text", ".find-option", "#find-count", ".toolbar-title", "#table-dialog h2", "#table-dialog label", "#doc-content .para"];
+    const showAll = async () => {
+      await evaluate(`(() => { const p = document.querySelector("#doc-content .para"); document.getElementById("doc-content").focus(); const r = document.createRange(); r.setStart(p, 0); getSelection().removeAllRanges(); getSelection().addRange(r); document.dispatchEvent(new Event("selectionchange")); })()`);
+      await waitFor(`!document.getElementById("style-select").disabled`);
+      await evaluate(`document.getElementById("find-bar").hidden = false; document.getElementById("find-count").textContent = "1 of 3"; document.getElementById("table-toolbar").hidden = false`);
+    };
+    for (const theme of ["light", "dark"]) {
+      await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
+      await showAll();
+      for (const kind of ["error", "warning", "info"]) {
+        await evaluate(`document.getElementById("notice").hidden = false; document.getElementById("notice").dataset.kind = "${kind}"`);
+        const [[, ratio]] = await contrast(["#notice-text"]);
+        check(ratio >= 4.5, `${theme} theme: ${kind} messages have enough contrast (${ratio}:1)`);
+      }
+      const results = await contrast(TEXT.filter((t) => t !== "#notice-text"));
+      const low = results.filter(([, ratio]) => ratio < 4.5);
+      check(results.length >= 10 && !low.length, `${theme} theme: interface text has at least 4.5:1 contrast (${results.length} checked${low.length ? `; too low: ${JSON.stringify(low)}` : ""})`);
+      await evaluate(`document.querySelector('[data-insert="table"]').click()`);
+      await waitFor(`document.getElementById("table-dialog").open`);
+      const dialog = await contrast(["#table-dialog h2", "#table-dialog label", "#table-dialog .button"]);
+      check(dialog.length === 3 && dialog.every(([, r]) => r >= 4.5), `${theme} theme: dialogs have enough contrast (${JSON.stringify(dialog)})`);
+      await press(...ESCAPE);
+    }
+    await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
+    await evaluate(`document.getElementById("find-bar").hidden = true; document.getElementById("table-toolbar").hidden = true; document.getElementById("notice").hidden = true`);
+
+    // Reduced motion is respected (nothing in the interface animates).
+    await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    check((await evaluate(`getComputedStyle(document.querySelector(".tool")).transitionDuration`)) === "0s", "reduced motion: no transitions");
+    await cdp.send("Emulation.setEmulatedMedia", { features: [] });
+
   } finally {
     await session.close();
   }
@@ -170,7 +235,7 @@ async function main() {
     console.error(`\n${failures.length} check(s) failed.`);
     process.exit(1);
   }
-  console.log("\nAll keyboard checks passed.");
+  console.log("\nAll accessibility checks passed.");
 }
 
 main().catch((err) => {

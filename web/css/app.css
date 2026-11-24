@@ -18,6 +18,24 @@
   --warn: #c19c00;
   --error: #a4262c;
   --focus: #0f6cbd;
+  --accent: #2b579a;
+  --primary-hover: #1e4377;
+  --surface: #ffffff;
+  --control-bg: #ffffff;
+  --disabled: #a19f9d;
+  --hover-overlay: rgba(0, 0, 0, 0.06);
+  --error-bg: #fde7e9;
+  --error-border: #f1bbbc;
+  --warning-bg: #fff4ce;
+  --warning-text: #5c4a00;
+  --warning-border: #f2df8c;
+  --info-bg: #e8f1fb;
+  --info-border: #c7dcf3;
+  --findbar-bg: #fffbe6;
+  --contextual-bg: #eef3fa;
+  /* The sheet is white in both themes, like paper; its own text colours. */
+  --page-text: #201f1e;
+  --page-muted: #605e5c;
   --ui-font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --doc-font: Calibri, Carlito, "Segoe UI", Arial, sans-serif;
 
@@ -29,6 +47,41 @@
   --margin-right: 96px;
   --margin-bottom: 96px;
   --margin-left: 96px;
+  color-scheme: light dark;
+}
+
+/* Dark theme for the interface (the document sheet stays white). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chrome-bg: #252423;
+    --chrome-border: #4a4846;
+    --title-bg: #1b365f;
+    --text: #f3f2f1;
+    --muted: #c8c6c4;
+    --tool-hover: #3b3a39;
+    --tool-active: #4f4d4b;
+    --workspace-bg: #1b1a19;
+    --page-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 10px rgba(0, 0, 0, 0.6);
+    --ok: #92c353;
+    --warn: #fce100;
+    --error: #ff99a4;
+    --focus: #6cb8f6;
+    --accent: #8ab4f8;
+    --primary-hover: #3a6cb5;
+    --surface: #2d2c2b;
+    --control-bg: #323130;
+    --disabled: #8a8886;
+    --hover-overlay: rgba(255, 255, 255, 0.1);
+    --error-bg: #3e1f22;
+    --error-border: #6e3b3f;
+    --warning-bg: #3d3214;
+    --warning-text: #ffe28a;
+    --warning-border: #6b5a1e;
+    --info-bg: #1d2d42;
+    --info-border: #34506f;
+    --findbar-bg: #2f2c1f;
+    --contextual-bg: #1f2a38;
+  }
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -101,7 +154,7 @@ body {
 .tool-icon { font-size: 1rem; line-height: 1; }
 .tool:hover:not(:disabled) { background: var(--tool-hover); }
 .tool:active:not(:disabled), .tool[aria-pressed="true"] { background: var(--tool-active); }
-.tool:disabled, .tool-select:disabled { color: #a19f9d; cursor: not-allowed; }
+.tool:disabled, .tool-select:disabled { color: var(--disabled); cursor: not-allowed; opacity: 1; }
 .tool:focus-visible, .tool-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 .tool-select {
@@ -109,7 +162,7 @@ body {
   padding: 0 0.3rem;
   border: 1px solid var(--chrome-border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--control-bg);
   font: inherit;
   color: var(--text);
 }
@@ -153,6 +206,7 @@ body {
   font-family: var(--doc-font);
   font-size: 11pt;
   line-height: 1.15;
+  color: var(--page-text);
 }
 
 /* Visible margin guides, as in a word processor's print layout. */
@@ -166,8 +220,8 @@ body {
   outline: 1px dashed var(--margin-guide);
 }
 
-.welcome { margin-top: 30%; text-align: center; color: var(--muted); font-family: var(--ui-font); }
-.welcome h1 { font-size: 1.4rem; font-weight: 600; color: var(--text); margin: 0 0 0.75rem; }
+.welcome { margin-top: 30%; text-align: center; color: var(--page-muted); font-family: var(--ui-font); }
+.welcome h1 { font-size: 1.4rem; font-weight: 600; color: var(--page-text); margin: 0 0 0.75rem; }
 .welcome p { margin: 0.4rem auto; max-width: 30rem; line-height: 1.5; }
 .welcome-note { font-size: 0.85rem; }
 
@@ -208,12 +262,12 @@ body {
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0.75rem;
-  background: #fde7e9;
+  background: var(--error-bg);
   color: var(--error);
-  border-bottom: 1px solid #f1bbbc;
+  border-bottom: 1px solid var(--error-border);
 }
-.notice[data-kind="warning"] { background: #fff4ce; color: #5c4a00; border-color: #f2df8c; }
-.notice[data-kind="info"] { background: #e8f1fb; color: var(--text); border-color: #c7dcf3; }
+.notice[data-kind="warning"] { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
+.notice[data-kind="info"] { background: var(--info-bg); color: var(--text); border-color: var(--info-border); }
 .notice-text { flex: 1; }
 .notice-close {
   border: none;
@@ -225,10 +279,10 @@ body {
   padding: 0.1rem 0.4rem;
   border-radius: 3px;
 }
-.notice-close:hover { background: rgba(0, 0, 0, 0.06); }
+.notice-close:hover { background: var(--hover-overlay); }
 
 /* Drag a .docx onto the workspace to open it. */
-.workspace.is-drop-target { outline: 3px dashed var(--title-bg); outline-offset: -8px; }
+.workspace.is-drop-target { outline: 3px dashed var(--accent); outline-offset: -8px; }
 
 /* ----- Document content (editing surface) ----- */
 
@@ -299,8 +353,8 @@ body {
   display: block;
   text-align: center;
   font: 0.75rem var(--ui-font);
-  color: var(--muted);
-  border-top: 1px dashed var(--muted);
+  color: var(--page-muted);
+  border-top: 1px dashed var(--page-muted);
   margin: 4pt 0;
   user-select: none;
 }
@@ -324,9 +378,9 @@ body {
 .tool-select-narrow { width: 7.75rem; }
 .tool-color { position: relative; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .tool-color input[type="color"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }
-.tool-color:has(input:disabled) { color: #a19f9d; cursor: not-allowed; }
+.tool-color:has(input:disabled) { color: var(--disabled); cursor: not-allowed; }
 .tool-color:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
-.tool[aria-pressed="true"] { box-shadow: inset 0 -2px 0 var(--title-bg); }
+.tool[aria-pressed="true"] { box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* ----- Headers and footers (Phase 5) ----- */
 .hf {
@@ -374,8 +428,8 @@ body {
 .table-wrap td { overflow-wrap: break-word; }
 
 /* Contextual table toolbar, shown while the cursor is in a table. */
-.toolbar-table { background: #eef3fa; }
-.toolbar-title { font-weight: 600; color: var(--title-bg); padding: 0 0.35rem; }
+.toolbar-table { background: var(--contextual-bg); }
+.toolbar-title { font-weight: 600; color: var(--accent); padding: 0 0.35rem; }
 .swatch-shading { font-size: 1rem; }
 
 /* Dialogs */
@@ -384,6 +438,7 @@ body {
   border-radius: 6px;
   padding: 0;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  background: var(--surface);
   color: var(--text);
   font: 14px var(--ui-font);
   max-width: calc(100vw - 32px);
@@ -392,13 +447,13 @@ body {
 .dialog-form { padding: 1rem 1.25rem; min-width: min(20rem, calc(100vw - 64px)); }
 .dialog h2 { font-size: 1.05rem; margin: 0 0 0.9rem; }
 .dialog-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 0.75rem; align-items: center; }
-.dialog-grid input[type="number"], .dialog-grid select { font: inherit; padding: 0.2rem 0.35rem; border: 1px solid var(--chrome-border); border-radius: 3px; min-width: 0; }
+.dialog-grid input[type="number"], .dialog-grid select { font: inherit; padding: 0.2rem 0.35rem; border: 1px solid var(--chrome-border); border-radius: 3px; min-width: 0; background: var(--control-bg); color: var(--text); }
 .dialog-grid .span-2 { grid-column: 1 / -1; }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.1rem; }
-.button { font: inherit; padding: 0.35rem 0.9rem; border: 1px solid var(--chrome-border); border-radius: 4px; background: #fff; cursor: pointer; }
+.button { font: inherit; padding: 0.35rem 0.9rem; border: 1px solid var(--chrome-border); border-radius: 4px; background: var(--control-bg); color: var(--text); cursor: pointer; }
 .button:hover { background: var(--tool-hover); }
-.button-primary { background: var(--title-bg); border-color: var(--title-bg); color: #fff; }
-.button-primary:hover { background: #1e4377; }
+.button-primary { background: #2b579a; border-color: #2b579a; color: #fff; }
+.button-primary:hover { background: var(--primary-hover); }
 .button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 /* Pictures: a selected picture shows a resize handle at its corner. */
@@ -419,24 +474,24 @@ body {
 .hf[data-empty="true"]:hover::before {
   content: "Double-click to add a " attr(data-label-lower);
   font: 0.75rem var(--ui-font);
-  color: var(--muted);
+  color: var(--page-muted);
 }
 .dialog-note { margin: -0.4rem 0 0.8rem; color: var(--muted); font-size: 0.85rem; }
 .radio-row { display: flex; gap: 1rem; flex-wrap: wrap; }
 
 /* Find and replace (Phase 6) */
-.findbar { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.35rem 0.75rem; background: #fffbe6; border-bottom: 1px solid var(--chrome-border); }
+.findbar { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.35rem 0.75rem; background: var(--findbar-bg); border-bottom: 1px solid var(--chrome-border); }
 .findbar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
 .find-main { display: flex; align-items: center; gap: 0.35rem; flex: 0 1 26rem; min-width: 0; }
 .find-main .find-input { flex: 1 1 auto; }
-.find-input { font: inherit; flex: 0 1 16rem; min-width: 5rem; padding: 0.2rem 0.4rem; border: 1px solid var(--chrome-border); border-radius: 3px; }
+.find-input { font: inherit; flex: 0 1 16rem; min-width: 5rem; padding: 0.2rem 0.4rem; border: 1px solid var(--chrome-border); border-radius: 3px; background: var(--control-bg); color: var(--text); }
 .find-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
 .find-count { min-width: 4.5rem; color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
 .find-option { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.85rem; margin-left: 0.35rem; }
 .find-close { margin-left: auto; }
 ::highlight(find-matches) { background-color: #fff1a8; }
 ::highlight(find-current) { background-color: #ff9632; }
-.notice-recovery { background: #e8f1fb; color: var(--text); border-bottom-color: #c7dcf3; flex-wrap: wrap; }
+.notice-recovery { background: var(--info-bg); color: var(--text); border-bottom-color: var(--info-border); flex-wrap: wrap; }
 .notice-recovery .button { padding: 0.25rem 0.8rem; }
 
 /* Long documents (Phase 7): blocks scrolled out of view skip layout and
@@ -451,3 +506,22 @@ body {
   content-visibility: auto;
   overflow-clip-margin: 4px;
 }
+
+/* ----- Interface polish and accessibility (Phase 7) ----- */
+
+/* Every control shows where the keyboard focus is. */
+.notice-close:focus-visible,
+.find-option input:focus-visible,
+.radio-row input:focus-visible,
+.dialog-grid input:focus-visible,
+.dialog-grid select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* Nothing moves for people who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
