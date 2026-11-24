@@ -8,6 +8,7 @@ import { createFindBar } from "./editor/findbar.js";
 import { enablePictureResizing } from "./editor/images.js";
 import { PICTURE_TYPES, createInsertTools } from "./editor/insert.js";
 import { createToolbar } from "./editor/toolbar.js";
+import { enableRegionKeys, focusRegion, rovingToolbar } from "./keyboard.js";
 import { downloadBlob, pickFile, pickSaveLocation, saveErrorMessage, supportsFileSystemAccess, writeToHandle } from "./files.js";
 import { connectionLabel, createConnectionMonitor, formatPagePosition, formatWordCount } from "./status.js";
 
@@ -405,6 +406,29 @@ function bindToolbar() {
   $("recovery-discard").addEventListener("click", discardDraft);
 }
 
+/** Keyboard access to the toolbars and the regions of the window (keyboard.js). */
+function bindKeyboardNavigation() {
+  const toolbars = [...document.querySelectorAll('[role="toolbar"]')];
+  for (const bar of toolbars) rovingToolbar(bar);
+  const documentRegion = () => (current ? editor.hosts.find((h) => h.contains(document.getSelection()?.anchorNode)) || $("doc-content") : $("welcome"));
+  enableRegionKeys(
+    () => [...toolbars, $("find-bar"), $("recovery"), $("notice"), documentRegion()],
+    () => {
+      const format = $("format-toolbar");
+      focusRegion(format.querySelector("[tabindex='0']:not(:disabled)") ? format : toolbars[0]);
+    },
+  );
+  // Escape in a toolbar goes back to the document.
+  for (const bar of toolbars) {
+    bar.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && current && !event.defaultPrevented) {
+        event.preventDefault();
+        documentRegion().focus();
+      }
+    });
+  }
+}
+
 function bindShortcuts() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && findBar.isOpen && !event.defaultPrevented) {
@@ -529,6 +553,7 @@ function init() {
   bindEditor();
   bindToolbar();
   bindShortcuts();
+  bindKeyboardNavigation();
   bindDragAndDrop();
   renderDocument();
   let wasOffline = false;

@@ -22,31 +22,31 @@
       <div class="titlebar-spacer" aria-hidden="true"></div>
     </header>
 
-    <nav class="toolbar toolbar-main" aria-label="File and editing">
+    <div class="toolbar toolbar-main" role="toolbar" aria-label="File and editing">
       <div class="toolbar-group" role="group" aria-label="File">
         <button type="button" class="tool" data-action="new" title="New blank document">
           <span class="tool-icon" aria-hidden="true">🗋</span><span class="tool-label">New</span>
         </button>
-        <button type="button" class="tool" data-action="open" title="Open a Word document (Ctrl+O)">
+        <button type="button" class="tool" data-action="open" aria-keyshortcuts="Control+O" title="Open a Word document (Ctrl+O)">
           <span class="tool-icon" aria-hidden="true">📂</span><span class="tool-label">Open</span>
         </button>
-        <button type="button" class="tool" data-action="save" disabled title="Save (Ctrl+S)">
+        <button type="button" class="tool" data-action="save" disabled aria-keyshortcuts="Control+S" title="Save (Ctrl+S)">
           <span class="tool-icon" aria-hidden="true">💾</span><span class="tool-label">Save</span>
         </button>
-        <button type="button" class="tool" data-action="save-as" disabled title="Save as a different file (Ctrl+Shift+S)">
+        <button type="button" class="tool" data-action="save-as" disabled aria-keyshortcuts="Control+Shift+S" title="Save as a different file (Ctrl+Shift+S)">
           <span class="tool-label">Save as…</span>
         </button>
       </div>
       <div class="toolbar-group" role="group" aria-label="History">
-        <button type="button" class="tool" data-action="undo" disabled title="Undo (Ctrl+Z)">
+        <button type="button" class="tool" data-action="undo" disabled aria-keyshortcuts="Control+Z" title="Undo (Ctrl+Z)">
           <span class="tool-icon" aria-hidden="true">↶</span><span class="tool-label visually-hidden">Undo</span>
         </button>
-        <button type="button" class="tool" data-action="redo" disabled title="Redo (Ctrl+Y)">
+        <button type="button" class="tool" data-action="redo" disabled aria-keyshortcuts="Control+Y" title="Redo (Ctrl+Y)">
           <span class="tool-icon" aria-hidden="true">↷</span><span class="tool-label visually-hidden">Redo</span>
         </button>
       </div>
       <div class="toolbar-group" role="group" aria-label="Editing">
-        <button type="button" class="tool" data-action="find" disabled title="Find (Ctrl+F) and replace (Ctrl+H)">
+        <button type="button" class="tool" data-action="find" disabled aria-keyshortcuts="Control+F Control+H" aria-controls="find-bar" aria-expanded="false" title="Find (Ctrl+F) and replace (Ctrl+H)">
           <span class="tool-icon" aria-hidden="true">🔍</span><span class="tool-label">Find</span>
         </button>
       </div>
@@ -57,7 +57,7 @@
         <button type="button" class="tool" data-insert="picture" disabled title="Insert a picture from a file (or drop it on the page)">
           <span class="tool-icon" aria-hidden="true">🖼</span><span class="tool-label">Picture</span>
         </button>
-        <button type="button" class="tool" data-insert="page-break" disabled title="Start a new page here (Ctrl+Enter)">
+        <button type="button" class="tool" data-insert="page-break" disabled aria-keyshortcuts="Control+Enter" title="Start a new page here (Ctrl+Enter)">
           <span class="tool-icon" aria-hidden="true">⤓</span><span class="tool-label">Page break</span>
         </button>
         <button type="button" class="tool" data-insert="header" disabled title="Add or edit the header (or double-click the top of the page)">
@@ -74,9 +74,9 @@
           <span class="tool-icon" aria-hidden="true">📄</span><span class="tool-label">Page setup</span>
         </button>
       </div>
-    </nav>
+    </div>
 
-    <nav class="toolbar toolbar-format" aria-label="Formatting" id="format-toolbar">
+    <div class="toolbar toolbar-format" role="toolbar" aria-label="Formatting" id="format-toolbar">
       <div class="toolbar-group" role="group" aria-label="Style">
         <label class="visually-hidden" for="style-select">Paragraph style</label>
         <select id="style-select" class="tool-select tool-select-wide" data-format="style" disabled title="Paragraph style (Ctrl+Alt+1/2/3 headings, Ctrl+Alt+0 normal)"></select>
@@ -88,10 +88,10 @@
         <select id="font-size" class="tool-select" data-format="size" disabled title="Font size (Ctrl+] larger, Ctrl+[ smaller)"></select>
       </div>
       <div class="toolbar-group" role="group" aria-label="Character formatting">
-        <button type="button" class="tool tool-square" data-format="bold" aria-pressed="false" disabled title="Bold (Ctrl+B)"><b aria-hidden="true">B</b><span class="visually-hidden">Bold</span></button>
-        <button type="button" class="tool tool-square" data-format="italic" aria-pressed="false" disabled title="Italic (Ctrl+I)"><i aria-hidden="true">I</i><span class="visually-hidden">Italic</span></button>
-        <button type="button" class="tool tool-square" data-format="underline" aria-pressed="false" disabled title="Underline (Ctrl+U)"><u aria-hidden="true">U</u><span class="visually-hidden">Underline</span></button>
-        <button type="button" class="tool tool-square" data-format="strike" aria-pressed="false" disabled title="Strikethrough (Ctrl+Shift+X)"><s aria-hidden="true">S</s><span class="visually-hidden">Strikethrough</span></button>
+        <button type="button" class="tool tool-square" data-format="bold" aria-keyshortcuts="Control+B" aria-pressed="false" disabled title="Bold (Ctrl+B)"><b aria-hidden="true">B</b><span class="visually-hidden">Bold</span></button>
+        <button type="button" class="tool tool-square" data-format="italic" aria-keyshortcuts="Control+I" aria-pressed="false" disabled title="Italic (Ctrl+I)"><i aria-hidden="true">I</i><span class="visually-hidden">Italic</span></button>
+        <button type="button" class="tool tool-square" data-format="underline" aria-keyshortcuts="Control+U" aria-pressed="false" disabled title="Underline (Ctrl+U)"><u aria-hidden="true">U</u><span class="visually-hidden">Underline</span></button>
+        <button type="button" class="tool tool-square" data-format="strike" aria-keyshortcuts="Control+Shift+X" aria-pressed="false" disabled title="Strikethrough (Ctrl+Shift+X)"><s aria-hidden="true">S</s><span class="visually-hidden">Strikethrough</span></button>
         <label class="tool tool-square tool-color" title="Text colour">
           <span class="color-swatch swatch-text" aria-hidden="true">A</span>
           <span class="visually-hidden">Text colour</span>
@@ -112,14 +112,14 @@
         </select>
       </div>
       <div class="toolbar-group" role="group" aria-label="Paragraph">
-        <button type="button" class="tool tool-square" data-format="align" data-value="left" aria-pressed="false" disabled title="Align left (Ctrl+Shift+L)"><span class="align-icon align-left" aria-hidden="true"></span><span class="visually-hidden">Align left</span></button>
-        <button type="button" class="tool tool-square" data-format="align" data-value="center" aria-pressed="false" disabled title="Centre (Ctrl+Shift+E)"><span class="align-icon align-center" aria-hidden="true"></span><span class="visually-hidden">Centre</span></button>
-        <button type="button" class="tool tool-square" data-format="align" data-value="right" aria-pressed="false" disabled title="Align right (Ctrl+Shift+R)"><span class="align-icon align-right" aria-hidden="true"></span><span class="visually-hidden">Align right</span></button>
-        <button type="button" class="tool tool-square" data-format="align" data-value="justify" aria-pressed="false" disabled title="Justify (Ctrl+Shift+J)"><span class="align-icon align-justify" aria-hidden="true"></span><span class="visually-hidden">Justify</span></button>
-        <button type="button" class="tool tool-square" data-format="list" data-value="bullet" aria-pressed="false" disabled title="Bulleted list (Ctrl+Shift+8)"><span aria-hidden="true">•≡</span><span class="visually-hidden">Bulleted list</span></button>
-        <button type="button" class="tool tool-square" data-format="list" data-value="number" aria-pressed="false" disabled title="Numbered list (Ctrl+Shift+7)"><span aria-hidden="true">1≡</span><span class="visually-hidden">Numbered list</span></button>
-        <button type="button" class="tool tool-square" data-format="indent" data-value="-1" disabled title="Decrease indent (Ctrl+Shift+M)"><span aria-hidden="true">⇤</span><span class="visually-hidden">Decrease indent</span></button>
-        <button type="button" class="tool tool-square" data-format="indent" data-value="1" disabled title="Increase indent (Ctrl+M)"><span aria-hidden="true">⇥</span><span class="visually-hidden">Increase indent</span></button>
+        <button type="button" class="tool tool-square" data-format="align" data-value="left" aria-keyshortcuts="Control+Shift+L" aria-pressed="false" disabled title="Align left (Ctrl+Shift+L)"><span class="align-icon align-left" aria-hidden="true"></span><span class="visually-hidden">Align left</span></button>
+        <button type="button" class="tool tool-square" data-format="align" data-value="center" aria-keyshortcuts="Control+Shift+E" aria-pressed="false" disabled title="Centre (Ctrl+Shift+E)"><span class="align-icon align-center" aria-hidden="true"></span><span class="visually-hidden">Centre</span></button>
+        <button type="button" class="tool tool-square" data-format="align" data-value="right" aria-keyshortcuts="Control+Shift+R" aria-pressed="false" disabled title="Align right (Ctrl+Shift+R)"><span class="align-icon align-right" aria-hidden="true"></span><span class="visually-hidden">Align right</span></button>
+        <button type="button" class="tool tool-square" data-format="align" data-value="justify" aria-keyshortcuts="Control+Shift+J" aria-pressed="false" disabled title="Justify (Ctrl+Shift+J)"><span class="align-icon align-justify" aria-hidden="true"></span><span class="visually-hidden">Justify</span></button>
+        <button type="button" class="tool tool-square" data-format="list" data-value="bullet" aria-keyshortcuts="Control+Shift+8" aria-pressed="false" disabled title="Bulleted list (Ctrl+Shift+8)"><span aria-hidden="true">•≡</span><span class="visually-hidden">Bulleted list</span></button>
+        <button type="button" class="tool tool-square" data-format="list" data-value="number" aria-keyshortcuts="Control+Shift+7" aria-pressed="false" disabled title="Numbered list (Ctrl+Shift+7)"><span aria-hidden="true">1≡</span><span class="visually-hidden">Numbered list</span></button>
+        <button type="button" class="tool tool-square" data-format="indent" data-value="-1" disabled aria-keyshortcuts="Control+Shift+M" title="Decrease indent (Ctrl+Shift+M)"><span aria-hidden="true">⇤</span><span class="visually-hidden">Decrease indent</span></button>
+        <button type="button" class="tool tool-square" data-format="indent" data-value="1" disabled aria-keyshortcuts="Control+M" title="Increase indent (Ctrl+M)"><span aria-hidden="true">⇥</span><span class="visually-hidden">Increase indent</span></button>
         <label class="visually-hidden" for="line-spacing">Line spacing</label>
         <select id="line-spacing" class="tool-select tool-select-narrow" data-format="line" disabled title="Line spacing">
           <option value="">Line spacing</option>
@@ -138,9 +138,9 @@
           <option value="240,240">12 pt before and after</option>
         </select>
       </div>
-    </nav>
+    </div>
 
-    <nav class="toolbar toolbar-table" id="table-toolbar" aria-label="Table" hidden>
+    <div class="toolbar toolbar-table" role="toolbar" id="table-toolbar" aria-label="Table" hidden>
       <span class="toolbar-title" aria-hidden="true">Table</span>
       <div class="toolbar-group" role="group" aria-label="Rows">
         <button type="button" class="tool" data-table="row-above" title="Insert a row above"><span class="tool-icon" aria-hidden="true">⤒</span><span class="tool-label">Row above</span></button>
@@ -168,7 +168,7 @@
         <button type="button" class="tool" data-table="cell-shading" data-value="" title="Remove the cell's shading"><span class="tool-icon" aria-hidden="true">⊘</span><span class="tool-label">No shading</span></button>
         <button type="button" class="tool" data-table="delete-table" title="Delete the whole table"><span class="tool-icon" aria-hidden="true">🗑</span><span class="tool-label">Delete table</span></button>
       </div>
-    </nav>
+    </div>
 
     <div class="findbar" id="find-bar" role="search" aria-label="Find and replace" hidden>
       <div class="findbar-row">

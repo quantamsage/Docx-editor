@@ -33,6 +33,7 @@ pub static STATIC_ASSETS: &[Asset] = &[
     asset!("js/drafts.js", "text/javascript; charset=utf-8"),
     asset!("js/files.js", "text/javascript; charset=utf-8"),
     asset!("js/layout.js", "text/javascript; charset=utf-8"),
+    asset!("js/keyboard.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/containers.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/content.js", "text/javascript; charset=utf-8"),
     asset!("js/editor/dom.js", "text/javascript; charset=utf-8"),
@@ -78,5 +79,27 @@ mod tests {
             assert!(seen.insert(asset.path), "{} listed twice", asset.path);
         }
         assert!(INDEX.body.starts_with(b"<!doctype html>"));
+    }
+
+    #[test]
+    fn every_frontend_file_is_embedded() {
+        // A file added to web/ but not to STATIC_ASSETS would be missing
+        // from the binary (and the page would fail to load it).
+        fn walk(dir: &std::path::Path, base: &std::path::Path, out: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, base, out);
+                } else {
+                    out.push(path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web");
+        let mut files = Vec::new();
+        walk(&web, &web, &mut files);
+        for file in files.iter().filter(|f| f.as_str() != "index.html") {
+            assert!(find(file).is_some(), "web/{file} is not embedded (add it to STATIC_ASSETS)");
+        }
     }
 }

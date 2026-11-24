@@ -68,6 +68,8 @@ async function main() {
     await type("new row");
     check(await waitForModel((m) => cellText(m, 2, 0) === "new row"), "the cursor is in the new row's first cell");
 
+    check(await waitFor(`!document.getElementById("table-toolbar").hidden && document.querySelectorAll('#table-toolbar [tabindex="0"]').length === 1`), "the table toolbar appears in a table with one Tab stop");
+
     // Escape closes dialogs and returns the focus to the document.
     await evaluate(`document.querySelector('[data-insert="page-setup"]').click()`);
     check(await waitFor(`document.getElementById("page-setup-dialog").open`), "Page setup opens");
@@ -88,6 +90,52 @@ async function main() {
     await press("Tab", "Tab", 9, SHIFT);
     check(await waitForModel((m) => m.blocks[0].numbering?.level === 0), "Shift+Tab moves it back up");
     check(await waitForModel((m) => !JSON.stringify(m.blocks[0]).includes("\\t")), "no tab character was typed into the list item");
+
+    // Toolbars: one Tab stop each, arrow keys inside, Alt+F10, Escape and F6.
+    const toolbars = await evaluate(`[...document.querySelectorAll('[role="toolbar"]:not([hidden])')].map((t) => [t.getAttribute("aria-label"), t.querySelectorAll('[tabindex="0"]').length])`);
+    check(toolbars.length === 2 && toolbars.every(([label, stops]) => label && stops === 1), `each toolbar is labelled and has one Tab stop (${JSON.stringify(toolbars)})`);
+    await evaluate(`document.activeElement.blur()`);
+    const stops = [];
+    for (let i = 0; i < 12 && stops[stops.length - 1] !== "doc-content"; i++) {
+      await press(...TAB);
+      stops.push(await focused());
+    }
+    check(stops[stops.length - 1] === "doc-content" && stops.length <= 4, `Tab reaches the document in a few steps (${stops.join(" → ")})`);
+    await press("F10", "F10", 121, 1);
+    check((await evaluate(`document.activeElement.closest('[role="toolbar"]')?.id`)) === "format-toolbar", "Alt+F10 goes to the formatting toolbar");
+    const first = await focused();
+    await press("ArrowRight", "ArrowRight", 39);
+    const second = await focused();
+    check(first !== second && (await evaluate(`document.activeElement.closest("#format-toolbar") !== null`)), `ArrowRight moves to the next control (${first} → ${second})`);
+    await press("End", "End", 35);
+    check((await focused()) === "para-spacing", "End goes to the last control");
+    await press("Home", "Home", 36);
+    check((await focused()) === "style-select", "Home goes to the first control");
+    await press("ArrowLeft", "ArrowLeft", 37);
+    check((await focused()) === "para-spacing", "ArrowLeft wraps around to the last control");
+    await press(...ESCAPE);
+    check(await waitFor(`document.activeElement.id === "doc-content"`), "Escape in a toolbar returns to the document");
+    await press("F6", "F6", 117);
+    check((await evaluate(`document.activeElement.closest('[role="toolbar"]')?.getAttribute("aria-label")`)) === "File and editing", "F6 from the document goes to the first toolbar");
+    await press("F6", "F6", 117, SHIFT);
+    check((await focused()) === "doc-content", "Shift+F6 goes back to the document");
+
+    // The find bar: the Find button says whether it is open.
+    await press("f", "KeyF", 70, CTRL);
+    check(await waitFor(`!document.getElementById("find-bar").hidden && document.querySelector('[data-action="find"]').getAttribute("aria-expanded") === "true"`), "Ctrl+F opens the find bar and Find is marked expanded");
+    await press(...ESCAPE);
+    check(await waitFor(`document.querySelector('[data-action="find"]').getAttribute("aria-expanded") === "false"`), "closing the find bar marks Find collapsed");
+
+    // The accessibility tree: every control has a name; toggles say whether they are on.
+    await cdp.send("Accessibility.enable");
+    const { nodes } = await cdp.send("Accessibility.getFullAXTree");
+    const controls = nodes.filter((n) => !n.ignored && ["button", "combobox", "textbox", "checkbox", "radio", "spinbutton", "ColorWell", "toolbar", "searchbox"].includes(n.role?.value));
+    const unnamed = controls.filter((n) => !(n.name?.value || "").trim()).map((n) => n.role.value);
+    check(controls.length > 30 && unnamed.length === 0, `all ${controls.length} controls have accessible names${unnamed.length ? ` (unnamed: ${unnamed.join(", ")})` : ""}`);
+    const bold = controls.find((n) => n.name?.value === "Bold");
+    check(bold && (bold.properties || []).some((p) => p.name === "pressed"), "Bold exposes its pressed state");
+    const shortcut = await evaluate(`document.querySelector('[data-format="bold"]').getAttribute("aria-keyshortcuts")`);
+    check(shortcut === "Control+B", "toolbar buttons announce their keyboard shortcuts");
   } finally {
     await session.close();
   }

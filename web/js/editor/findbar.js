@@ -61,9 +61,13 @@ export function createFindBar({ editor, bar, onInfo }) {
     reveal();
   }
 
+  /** The toolbar button that opens the bar (aria-expanded follows the bar). */
+  const opener = () => document.querySelector('[aria-controls="find-bar"]');
+
   function open(withReplace) {
     if (!editor.document) return;
     bar.hidden = false;
+    opener()?.setAttribute("aria-expanded", "true");
     $("replace-row").hidden = !withReplace;
     const selection = document.getSelection();
     const selected = selection && !selection.isCollapsed ? selection.toString() : "";
@@ -76,6 +80,7 @@ export function createFindBar({ editor, bar, onInfo }) {
   function close() {
     if (bar.hidden) return;
     bar.hidden = true;
+    opener()?.setAttribute("aria-expanded", "false");
     const current = index >= 0 ? matches[index] : null;
     matches = [];
     index = -1;
