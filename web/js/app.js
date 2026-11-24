@@ -184,9 +184,16 @@ function renderDocument() {
   if (insertTools) insertTools.update();
 }
 
+let appliedGeometry = "";
+
 function applyPageGeometry(section) {
   const page = document.querySelector("#workspace .page");
   const geometry = pageGeometry(section);
+  // Changing these inherited properties restyles the whole page, which is
+  // slow on long documents: only set them when the page setup changed.
+  const key = JSON.stringify(geometry);
+  if (key === appliedGeometry) return geometry;
+  appliedGeometry = key;
   page.style.setProperty("--page-width", `${geometry.widthPx}px`);
   page.style.setProperty("--page-height", `${geometry.heightPx}px`);
   page.style.setProperty("--margin-top", `${geometry.margins.top}px`);

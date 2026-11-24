@@ -342,6 +342,21 @@ async function main() {
     const after = JSON.parse(await serverTexts(2));
     check(after.length === before.length && after.slice(1).join("|") === before.slice(1).join("|"), "other paragraphs are unchanged");
 
+    // A structural edit re-renders only what changed: the other blocks keep
+    // their elements (with updated indices), and undo shows the old text.
+    const blockCount = await evaluate(`document.querySelectorAll("#doc-content > [data-block]").length`);
+    await evaluate(`document.querySelector("#doc-content > [data-block]:last-child").__kept = true`);
+    await caretAt(headingBlock, "Annual Report".length);
+    await press("Enter", "Enter", 13);
+    check(await waitFor(`document.querySelectorAll("#doc-content > [data-block]").length === ${blockCount + 1}`), "Enter adds a block");
+    check(
+      await evaluate(`(() => { const last = document.querySelector("#doc-content > [data-block]:last-child"); return last.__kept === true && last.dataset.block === "${blockCount}"; })()`),
+      "unchanged blocks keep their elements and get their new index",
+    );
+    await evaluate(`document.querySelector('[data-action="undo"]').click()`);
+    check(await waitFor(`document.querySelectorAll("#doc-content > [data-block]").length === ${blockCount} && document.querySelector("#doc-content > [data-block]:last-child").dataset.block === "${blockCount - 1}"`), "undoing the Enter re-indexes the kept blocks");
+    check((await evaluate(`document.querySelector("#doc-content .para-title").textContent`)) === "Annual Report", "the title shows its text after undoing");
+
     // Table cells, the header and the footer are editable.
     const tableIndex = await evaluate(`Number(document.querySelector('#doc-content > [data-kind="table"]').dataset.block)`);
     const cellTexts = (row, cell) =>

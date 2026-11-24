@@ -35,7 +35,7 @@ import {
 import { containerBlocks, containerField, containerKey, parseContainerKey, parentKey } from "./containers.js";
 import { insertTextAtSelection, paragraphLength, parseParagraph, positionAt, selectionInfo, setCaret, setSelection } from "./dom.js";
 import { findMatches, replaceEdits } from "./find.js";
-import { renderBlocks, renderHeaderFooter } from "./render.js";
+import { forgetRendered, renderBlocks, renderHeaderFooter } from "./render.js";
 
 /** How long typing must pause before the change is sent. */
 export const SYNC_DELAY_MS = 400;
@@ -98,8 +98,9 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   /** The blocks of a container in the current model (empty if gone). */
   const blocksOf = (key) => (doc && containerBlocks(doc.model, key)) || [];
 
-  function render() {
-    const ctx = { mediaUrl: (part) => mediaUrl(doc.id, part) };
+  /** Renders the document; `reuse` keeps the elements of unchanged blocks (see render.js). */
+  function render(reuse = true) {
+    const ctx = { mediaUrl: (part) => mediaUrl(doc.id, part), reuse };
     renderBlocks(root, doc.model, ctx);
     if (regions.header) renderHeaderFooter(regions.header, doc.model, doc.model.header, ctx);
     if (regions.footer) renderHeaderFooter(regions.footer, doc.model, doc.model.footer, ctx);
@@ -117,7 +118,7 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     doc = { id: info.id, revision: info.revision || 0, model: info.model, canUndo: Boolean(info.can_undo), canRedo: Boolean(info.can_redo) };
     root.contentEditable = "true";
     root.setAttribute("aria-label", "Document text");
-    render();
+    render(false);
   }
 
   function unload() {
@@ -775,7 +776,11 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
   }
 
   function onInput() {
-    if (!doc || composing) return;
+    if (!doc) return;
+    // The page no longer shows what this block was rendered from.
+    const selection = root.ownerDocument.getSelection();
+    if (selection && selection.rangeCount) forgetRendered(selection.anchorNode);
+    if (composing) return;
     markDirtyAtSelection();
     scheduleSync();
   }

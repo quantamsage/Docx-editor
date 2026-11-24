@@ -321,6 +321,38 @@ function renderPreserved(block, index, container = "") {
   return el;
 }
 
+// ----- Re-rendering only what changed -----
+//
+// After an edit the whole model comes back, but usually only a block or
+// two changed. Each top-level element remembers the signature of what it
+// was rendered from (its block, its list marker and, for tables, whose
+// cells' keys contain it, its index); when the page is rendered again with
+// `ctx.reuse`, elements whose signature is unchanged are kept (only their
+// index is updated) and the page is patched in place. On a long document
+// this is the difference between rebuilding thousands of elements and
+// replacing a few. Elements the user typed into are forgotten (see
+// `forgetRendered`), since their content no longer matches what they
+// were rendered from.
+
+/** element → signature, for top-level blocks of rendered containers. */
+const signatures = new WeakMap();
+/** root → signature of what all its blocks depend on (styles, lists, container). */
+const contexts = new WeakMap();
+
+function blockSignature(block, index, marker) {
+  return `${block.type === "table" ? index : ""}|${marker || ""}|${JSON.stringify(block)}`;
+}
+
+/**
+ * Marks the rendered block containing `node` as changed on the page, so
+ * that the next render doesn't reuse it.
+ */
+export function forgetRendered(node) {
+  let el = node && node.nodeType === 1 ? node : node && node.parentElement;
+  while (el && el.parentElement && !contexts.has(el.parentElement)) el = el.parentElement;
+  if (el) signatures.delete(el);
+}
+
 /** Renders the body's blocks into `root`. */
 export function renderBlocks(root, model, ctx) {
   renderContainer(root, model, model.blocks || [], "", ctx);
@@ -346,10 +378,47 @@ function renderContainer(root, model, blocks, key, ctx) {
     lists: model.lists || [],
     markers: key ? null : listMarkers(model),
   };
+  const shared = JSON.stringify([key, model.styles || [], model.lists || []]);
+  // Elements that can be reused, by signature, in page order.
+  const pool = new Map();
+  if (ctx.reuse && contexts.get(root) === shared) {
+    // A selected picture carries its resize handle: render it afresh.
+    for (const selected of root.querySelectorAll(".is-selected")) forgetRendered(selected);
+    for (const el of root.children) {
+      const signature = signatures.get(el);
+      if (!signature) continue;
+      if (!pool.has(signature)) pool.set(signature, []);
+      pool.get(signature).push(el);
+    }
+  }
   const nodes = blocks.map((block, index) => {
-    if (block.type === "paragraph") return renderParagraph(block, index, context);
-    if (block.type === "table") return renderTable(block, index, context);
-    return renderPreserved(block, index, key);
+    const marker = context.markers ? context.markers[index] : null;
+    const signature = blockSignature(block, index, marker);
+    const reused = pool.get(signature)?.shift();
+    let el = reused;
+    if (el) {
+      el.dataset.block = String(index);
+    } else if (block.type === "paragraph") {
+      el = renderParagraph(block, index, context);
+    } else if (block.type === "table") {
+      el = renderTable(block, index, context);
+    } else {
+      el = renderPreserved(block, index, key);
+    }
+    signatures.set(el, signature);
+    return el;
   });
-  root.replaceChildren(...nodes);
+  if (!pool.size) {
+    root.replaceChildren(...nodes);
+  } else {
+    // Remove what isn't kept, then insert the new elements in place.
+    const kept = new Set(nodes);
+    for (const el of [...root.childNodes]) if (!kept.has(el)) el.remove();
+    let cursor = root.firstChild;
+    for (const el of nodes) {
+      if (el === cursor) cursor = cursor.nextSibling;
+      else root.insertBefore(el, cursor);
+    }
+  }
+  contexts.set(root, shared);
 }
