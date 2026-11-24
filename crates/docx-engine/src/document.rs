@@ -86,16 +86,6 @@ impl Snapshot {
     }
 }
 
-/// The state edits change, for rolling back a failed batch.
-struct Checkpoint {
-    xml: XmlDocument,
-    modified: bool,
-    edited: BTreeMap<String, XmlDocument>,
-    added: BTreeMap<String, Arc<Vec<u8>>>,
-    rels: Vec<Relationship>,
-    styles: Vec<crate::model::Style>,
-}
-
 impl Document {
     /// Opens a document from the bytes of a `.docx` file.
     pub fn open(bytes: &[u8]) -> Result<Self> {
@@ -540,24 +530,18 @@ impl Document {
         }
     }
 
-    fn checkpoint(&self) -> Checkpoint {
-        Checkpoint {
-            xml: self.xml.clone(),
-            modified: self.modified,
-            edited: self.edited.clone(),
-            added: self.added.clone(),
-            rels: self.rels.clone(),
-            styles: self.styles.clone(),
-        }
+    /// The state to return to if an edit fails. This is a [`Snapshot`]:
+    /// serializing the edited XML is several times faster than cloning the
+    /// tree (and dropping the clone) on large documents, and a failed edit,
+    /// the only time it is parsed again, is rare.
+    fn checkpoint(&self) -> Snapshot {
+        self.snapshot()
     }
 
-    fn rollback(&mut self, saved: Checkpoint) {
-        self.xml = saved.xml;
-        self.modified = saved.modified;
-        self.edited = saved.edited;
-        self.added = saved.added;
-        self.rels = saved.rels;
-        self.styles = saved.styles;
+    fn rollback(&mut self, saved: Snapshot) {
+        // The snapshot is the serialization of trees that were parsed from
+        // well-formed XML, so it parses again.
+        self.restore(&saved).expect("a snapshot of the document parses");
     }
 
     /// The current state, to return to it later with [`Document::restore`].

@@ -348,3 +348,35 @@ fn word_document_survives_splices() {
     assert_eq!(reopened.stats.tables, model.stats.tables);
     assert_eq!(reopened.stats.hyperlinks, model.stats.hyperlinks);
 }
+
+#[test]
+fn a_failed_batch_on_an_edited_document_restores_it_exactly() {
+    // Rolling back must also work once the main part and secondary parts
+    // (styles, numbering) were edited, and leave the file as it was.
+    let mut doc = open();
+    let first: Vec<Edit> = serde_json::from_str(
+        r#"[
+            {"op": "splice", "first": 0, "last": 0, "content": [{"type": "text", "text": "Edited", "like": {"block": 0, "inline": 0}}]},
+            {"op": "format_paragraphs", "first": 1, "last": 1, "format": {"list": {"kind": "bullet", "level": 0}}}
+        ]"#,
+    )
+    .unwrap();
+    doc.apply(&first).unwrap();
+    let model = doc.model();
+    let saved = doc.save().unwrap();
+
+    let failing: Vec<Edit> = serde_json::from_str(
+        r#"[
+            {"op": "splice", "first": 0, "last": 0, "content": [{"type": "text", "text": "Lost"}, {"type": "break"}]},
+            {"op": "format_paragraphs", "first": 0, "last": 0, "format": {"style_id": "Heading3", "list": {"kind": "number", "level": 1}}},
+            {"op": "delete_block", "block": 999}
+        ]"#,
+    )
+    .unwrap();
+    let err = doc.apply(&failing).unwrap_err().to_string();
+    assert!(err.contains("edit 3 of 3"), "{err}");
+    assert_eq!(doc.model(), model);
+    assert!(doc.is_modified());
+    let again = doc.save().unwrap();
+    assert!(changed_parts(&saved, &again).is_empty(), "{:?}", changed_parts(&saved, &again));
+}
