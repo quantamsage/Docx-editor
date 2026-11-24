@@ -58,7 +58,9 @@ web/
   js/drafts.js                 local drafts in IndexedDB, Web Locks, which drafts to offer
   js/documents.js              interpreting the model: page geometry, summary, outline
   js/layout.js                 paper sizes, margin presets, cm conversion, picture sizes
-  js/status.js                 status bar: word count, page position, connection monitor
+  js/keyboard.js               toolbar keyboard navigation (roving Tab stop), F6 regions, Alt+F10
+  js/announce.js               screen-reader announcements through live regions
+  js/status.js                 status bar: word count, page estimate, connection monitor
   js/editor/content.js         model ⇄ editable segments ⇄ splice pieces (no DOM; unit-tested)
   js/editor/containers.js      container keys: body, table cells, header, footer (no DOM)
   js/editor/tables.js          table commands → edits (no DOM)
@@ -71,7 +73,11 @@ web/
   js/editor/find.js            find matches and replacement splices (no DOM)
   js/editor/findbar.js         the find and replace bar, match highlighting
 tests/frontend/                Node test-runner tests for web/js modules
-tests/browser/smoke.mjs        headless-browser test of the real interface
+tests/browser/harness.mjs      starts the editor and headless Edge/Chrome; DevTools protocol client
+tests/browser/smoke.mjs        every feature through the real interface (new document and Word document)
+tests/browser/accessibility.mjs  keyboard only, focus, dialogs, announcements, accessibility tree, contrast, phone layout
+tests/browser/perf.mjs         timings on a 330-page document (built by large-document.mjs)
+tests/browser/screenshots.mjs  the README screenshots (docs/screenshots/)
 tests/fixtures/word-sample.docx  document produced by Microsoft Word (see scripts/)
 scripts/                       Word fixture generator and Word verification (PowerShell)
 ```
@@ -91,7 +97,7 @@ The spec's central requirement is that editing a small part of a document leaves
 - **`zip`** (deflate only, no encryption or other codecs) for the archive.
 - **`quick-xml`** for XML tokenizing; the tree is built on top of it.
 
-## Preservation strategy
+## Preservation
 
 1. **Package level.** All parts are read into memory with their names, order, compression method and timestamps. On save, every part is written back in the same order. A part that was not edited is written from its original bytes, so styles, numbering, headers, footers, footnotes, comments, images, embedded objects, custom XML, settings and any unknown parts are untouched.
 2. **XML level.** `word/document.xml` is parsed into a lossless tree. Each element keeps the exact text of its original start tag (attribute order, quotes, whitespace, namespace declarations); text keeps its original escaping; comments, processing instructions and the XML declaration are kept verbatim. Serializing an unedited tree reproduces the input byte for byte (tested). If nothing in the document was edited, the original bytes are written without serializing at all.
@@ -103,16 +109,6 @@ The spec's central requirement is that editing a small part of a document leaves
 - Unedited documents: every part's content is identical after saving (`unedited_save_is_identical_part_by_part`, `resaving_words_output_changes_nothing`).
 - Edited documents: only the parts an edit needs are rewritten (the main document; the edited header or footer; and, when an edit adds something, the style sheet, numbering, relationships, content types and new pictures or headers). All other parts are byte-identical, and in rewritten parts the markup outside the edited elements is byte-identical (`editing_text_keeps_everything_else_intact`, `changed_parts` checks in `tables.rs`, `pictures.rs` and `layout.rs`).
 - Microsoft Word opens the edited files without a repair prompt and still finds the comment, footnote, picture, table, hyperlink, header and footer field (`scripts/verify-with-word.ps1`, run during development).
-
-### Known limitations
-
-- The ZIP container is rebuilt on save: part contents are identical, but compressed sizes and archive metadata may differ from the original file (the archive is written by the `zip` crate's deflate implementation).
-- Editing replaces only the runs whose text changed; new text copies the formatting (`w:rPr`) of the run it was typed into. Markers (bookmarks, comment ranges, permission ranges, proofing marks) keep their order, but new text is placed where the first removed run was, so a bookmark or comment range next to edited text can end up just before or after the new text rather than around it.
-- Deleting a paragraph that carries a section break is refused (it would merge two sections' page layouts).
-- Content controls (`w:sdt`), tracked changes, fields and similar constructs are preserved and their text is shown in the model, but they are not editable.
-- Documents that bind the WordprocessingML namespace as the default namespace are supported; the engine declares a `w:` prefix on the root when it first needs to write attributes. Strict OOXML documents are read; their edits are untested against Word.
-- UTF-16 encoded parts are rejected; Word always writes UTF-8.
-- Documents are kept in memory while open (at most 32 at a time, 100 MiB per upload).
 
 ## Editing
 
@@ -126,7 +122,7 @@ Every text edit is a **splice** (`docx_engine::Splice`): paragraphs `first..=las
 
 Inlines are addressed by their index in the model (`blocks[b].inlines[i]`), which counts the paragraph's children except `w:pPr` and markers. The engine walks the original children of the affected paragraphs in order: kept inlines and markers stay in order, unkept inlines are removed, and new text and breaks are inserted at the first removed inline (where the edit happened) or before the next kept one. The first resulting paragraph reuses the first paragraph's element and properties; paragraphs created by a break copy those properties (without paraIds). A section break carried by the last paragraph moves to the last resulting paragraph; a splice that would remove a section break in between is refused. Splices require every block in the range to be a paragraph, so selections across tables are refused.
 
-Typing (one paragraph), Enter, Shift+Enter, joining paragraphs with Backspace/Delete, deleting or typing over a selection across paragraphs, and pasting are all splices, so one tested operation covers them. `Document::apply` runs a batch atomically (the XML tree is restored if any edit fails).
+Typing (one paragraph), Enter, Shift+Enter, joining paragraphs with Backspace/Delete, deleting or typing over a selection across paragraphs, and pasting are all splices, so one tested operation covers them. `Document::apply` runs a batch atomically: it takes a snapshot first (the edited parts serialized, see *Undo and redo*) and restores it if any edit fails.
 
 ### Editor ⇄ server
 
@@ -144,16 +140,6 @@ Paragraphs live in **containers**: the document body, a cell of a table, or a he
 
 On the page every editable paragraph carries `data-block` and, outside the body, `data-container` with the container's key (`containers.js`). The header and footer are separate editing hosts (`#doc-header`, `#doc-footer`) around the body (`#doc-content`); the editor listens on all three, and the browser doesn't let a selection run from one host into another.
 
-### Limitations (Phase 3)
-
-- Pages are one continuous sheet with dashed lines at each page height; the editor does not paginate (see the Phase 5 limitations). The page count in the status bar is estimated from the height.
-- Content controls and text inside hyperlinks are shown but not editable.
-- Formatting with nothing selected applies to the word at the cursor; there's no "type in bold from here" mode yet.
-- The toolbar shows formatting set directly on the text; formatting that comes only from the paragraph's style (for example a heading's size) shows as the style default ("(Style font)", "–").
-- Lists restart only where Word's numbering would; there is no "restart numbering" or "continue list" command, and list numbering inside tables isn't drawn.
-- Each sync returns the whole document model, which is fine for typical documents but grows with very large ones.
-- Floating pictures are shown inline.
-
 ## Formatting
 
 **Character formatting** travels with splices: a `text` piece may carry a `format` (`bold`, `italic`, `underline`, `strike`, `font`, `size` in half-points, `color`, `highlight`). The engine copies the `like` run's `w:rPr` and applies only the named changes (`null` removes a property so the style applies; `false` writes an explicit off, e.g. `<w:b w:val="0"/>`, which can switch off a style's bold). Theme font and colour attributes are removed when an explicit font or colour is set, since they would override it. The changed `w:rPr` is put in the `CT_RPr` schema order; unknown children (language, kerning, extensions) are kept next to the property they followed. The frontend builds these splices with `content.formatRange`: text outside the selection keeps its runs (whole runs are kept untouched), selected text is rewritten with its own formatting plus the change, objects are kept.
@@ -168,7 +154,7 @@ On the page every editable paragraph carries `data-block` and, outside the body,
 
 **Toolbar:** `toolbar.js` reads the formatting at the selection (`editor.currentFormat()`: the run before the cursor, the paragraph, its list kind) on every selection change and sets button states and menus. Buttons act on mousedown without taking focus, so the selection is kept; after an edit the page is re-rendered and the selection restored. Shortcuts follow common editor conventions (some Word shortcuts such as `Ctrl+L` are reserved by browsers).
 
-## Tables, pictures, headers and page layout (Phase 5)
+## Tables, pictures, headers and page layout
 
 ### Tables
 
@@ -201,16 +187,7 @@ The model's `header` and `footer` are the default header and footer of the last 
 
 `check.rs` reports what Word is strict about: property children out of schema order or repeated (`pPr`, `rPr`, `sectPr`, `tblPr`, `tcPr`, `tblBorders`, `tbl`, `tr`), cell, paragraph and run properties that are not first, cells that don't end with a paragraph, and section properties that are not last in the body. The engine tests run it on every document they save, and `docx_tool check` runs it on a file. Documents edited by the engine, through the API and in the browser were also opened in Word with `scripts/verify-with-word.ps1` (tables with inserted and deleted rows and columns, cell shading and alignment, pictures, header text with a picture, "Page 3 of 4" with a page number start, landscape Letter).
 
-### Limitations (Phase 5)
-
-- **No pagination.** The page is one continuous sheet with dashed lines at each page height. Page breaks are shown as a labelled line, but the text after them is not moved to a new sheet, and the header and footer are shown once, at the top of the sheet and at its end, rather than on every page. Word paginates the saved file normally.
-- Only the default header and footer are shown and edited. First-page (`titlePg`) and even-page headers are kept but not shown, and a new header is not added to the first page of a section that has a different first page.
-- Tables: no merging or splitting of cells, no resizing columns by dragging, no per-cell borders, and no tables inside table cells (tables nested in cells are shown read-only). List numbering inside tables isn't drawn. Tables wider than the text are shown fitted to it.
-- Page setup applies to the whole document (every section); there is no per-section setup.
-- Pictures are inline only (floating pictures are shown inline and kept as they are); there is no cropping, rotation or text wrapping, and pictures are resized with the mouse or touch, not the keyboard. Pictures can't be pasted from the clipboard; insert or drop the file instead. Strict Open XML documents can't get new pictures, headers or footers.
-- Inserting a column in a table whose cells use percentage or automatic widths keeps those widths; only widths in twips follow the grid.
-
-## Saving and reliability (Phase 6)
+## Saving and reliability
 
 ### Reliable export
 
@@ -243,13 +220,77 @@ The model's `header` and `footer` are the default header and footer of the last 
 
 `tests/preservation.rs` runs scenarios covering every edit type on the Word-made fixture and on the hard-cases document, and checks for each that only the expected parts were rewritten, that every top-level block the edit didn't touch is byte-identical (longest common subsequence of the body's serialized children), that bookmarks, comment ranges and references, footnote references, complex and simple fields, hyperlinks, content controls, alternate content, extension elements, pictures, section properties, tables and paragraph ids are all still there (in exactly the expected number), that the XML passes `check.rs`, and that saving the result again changes nothing. A final test applies the scenarios one after another and undoes them all, which must give back the original file part for part. All scenario outputs were also opened in Word (`PRESERVATION_OUT` and `scripts/verify-with-word.ps1`), with no repair prompt and with their comments, footnotes, pictures, tables and hyperlinks.
 
-### Limitations (Phase 6)
+## Rendering and performance
 
-- Undo history lives in the server's memory with the open document: it is lost when the document is closed or reopened (also when it is recovered from a draft) and when the server restarts.
-- Undo restores the whole document state of each step; the cursor is put back where it was, which may not be where the undone change happened.
-- Find and replace doesn't search inside hyperlinks, fields, content controls, text boxes, footnotes, comments, nested tables or first-page/even-page headers, and replacement text can't contain line breaks.
-- A draft is written at most every two seconds, so the last moments of typing before a crash may be missing; drafts are only kept in the browser profile that was used, and not at all in a private window or when site storage is blocked.
+The editor has to stay responsive on long documents. `npm run test:perf` builds a 330-page report (3,000 paragraphs of mixed formatting, 125 tables, 165,000 words) through the API, opens it in headless Edge and times what a user does.
+
+- **Incremental rendering** (`render.js`). After an edit the server returns the whole model, but usually only a block or two changed. Each top-level element remembers the signature of what it was rendered from: its block's JSON, its list marker and, for tables (whose cells' container keys contain it), its index. On re-render, elements whose signature is unchanged are kept and only get their new `data-block`; the page is patched in place rather than rebuilt. A block the user typed into is forgotten on `input` (its DOM no longer matches its signature), so undoing back to an earlier state can't reuse stale content. Loading a document always renders from scratch.
+- **Skipping off-screen blocks** (`app.css`). Body blocks use `content-visibility: auto`, so the browser doesn't lay out or paint blocks out of view while typing. It is switched on (class `is-settled`) only after the first full layout, so that `contain-intrinsic-size: auto` has remembered each block's real height and the page estimate stays right. List paragraphs and paragraphs with pictures are excluded, since paint containment would clip their marker or resize handle.
+- **Page geometry** is only written to the page's CSS variables when the page setup changed; rewriting them restyled the whole page after every edit.
+- **Rolling back** a failed edit batch restores a serialized snapshot instead of keeping a clone of the XML tree. Cloning and dropping the tree cost more than the edit itself on large documents.
+
+Measured on that document (same machine, headless Edge; before → after this work):
+
+| Step | Before | After |
+| --- | --- | --- |
+| Engine: apply one typing edit | 64 ms | 11 ms |
+| Typing sync over HTTP (median) | 147 ms | 97 ms |
+| Key press to next frame (median / worst of 20) | 88 / 112 ms | 40 / 88 ms |
+| Enter (split a paragraph, until shown) | 1,213 ms | ~540 ms |
+| Bold on a word | 1,327 ms | ~300 ms |
+| Undo | 1,109 ms | ~550 ms |
+| Open (drop the file, until shown) | ~1,060 ms | ~1,350 ms |
+| Save (prepare the .docx) | ~350 ms | ~400 ms |
+
+Opening is slightly slower, because blocks are restyled once more when off-screen skipping is switched on. The remaining cost of an edit is mostly building and transferring the whole model (2.9 MB of JSON for this document) and parsing it in the browser; sending only the changed blocks would be the next step.
+
+## Accessibility
+
+- **Structure:** the three toolbars are `role="toolbar"` with labelled groups; the page regions are landmarks (banner, main, contentinfo); the document, header and footer are labelled multi-line text boxes; dialogs are native modal `<dialog>` elements with headings.
+- **Keyboard** (`keyboard.js`): each toolbar is one Tab stop with a roving `tabindex`; the arrow keys, Home and End move inside it, and a MutationObserver keeps the stop on an enabled, visible control as controls are enabled and disabled. Alt+F10 goes to the formatting toolbar, Escape back to the page, and F6/Shift+F6 cycle through toolbars, find bar, messages and page. Native dialogs trap the focus and close with Escape; Enter in a field confirms (the browser would use the first button, Cancel); the focus returns to where it was. Tab moves between table cells and changes list levels, as in Word; elsewhere it types a tab, and Shift+Tab leaves the page.
+- **States and names:** toggle buttons use `aria-pressed`, Find uses `aria-expanded`/`aria-controls`, buttons list their shortcuts in `aria-keyshortcuts`, and icon buttons have visually hidden labels. The accessibility test reads the browser's accessibility tree and checks that every control has a name.
+- **Announcements** (`announce.js`): two visually hidden live regions that are always in the page, one polite (`role="status"`) and one assertive (`role="alert"`), because a region that appears at the moment it changes is often not read. Errors are assertive; opening, creating and saving a document, undo and redo, messages and the draft recovery offer are polite. The find count is its own polite region.
+- **Visual:** colours are CSS tokens with a dark set under `prefers-color-scheme: dark` (the sheet stays white, with its own text colours). The accessibility test measures interface text, messages and dialogs at 4.5:1 or better in both themes. Every control has a visible focus outline, and `prefers-reduced-motion` turns off any animation and smooth scrolling.
+- **Narrow widths:** under 860 px each toolbar is a single row that scrolls sideways (made a containing block so its visually hidden labels can't widen the page), the margins shrink, and table columns are sized in proportion so tables fit.
+
+## Testing
+
+| Suite | What it covers |
+| --- | --- |
+| `cargo test` | Engine: parsing, preservation (byte-identical parts and blocks, constructs counted), every edit type on synthetic and Word-made documents, rollback, undo and redo, schema order. Server: routing, security headers and origin checks, every endpoint, embedded assets. |
+| `npm test` | The DOM-free frontend modules: content and segments, containers, tables (including Tab order), find, layout, status and page estimates, drafts, files, keyboard navigation, announcements. |
+| `npm run test:browser` | `smoke.mjs`: every feature through the real interface in headless Edge/Chrome, on a new document and on the Word-made fixture, with the server's model checked after each step; drafts and offline typing. `accessibility.mjs`: keyboard-only use, announcements, the accessibility tree, contrast in both themes and the phone layout. |
+| `npm run test:perf` | The timings above, with generous budgets that catch regressions. |
+| Word | `scripts/verify-with-word.ps1` opens edited files in Microsoft Word and checks for repair prompts and content (run during development). |
+
+## Limitations
+
+**Layout and display**
+- No pagination: the document is one continuous sheet with dashed lines at each page height. Page breaks are shown as a labelled line, but the text after them is not moved to a new sheet, and the header and footer are shown once, at the top of the sheet and at its end. The page count in the status bar is estimated from the height and the page breaks. Word paginates the saved file normally.
+- Only the default header and footer (of the last section) are shown and edited. First-page (`titlePg`) and even-page headers are kept but not shown, and a new header is not added to the first page of a section that has a different first page.
+- Floating pictures are shown inline. Tables wider than the text are shown fitted to it, and list numbering inside tables isn't drawn.
+- The toolbar shows formatting set directly on the text; formatting that comes only from the paragraph's style (for example a heading's size) shows as the style default.
+
+**Editing**
+- Content controls (`w:sdt`), tracked changes, fields, text inside hyperlinks, text boxes, footnotes and comments are preserved and their text is shown, but they are not editable. Nested tables are read-only.
+- Splices require every block in the range to be a paragraph, so selections that span a table and the text around it (including *select all* in a document with tables) can't be deleted or typed over. Deleting a paragraph that carries a section break is refused.
+- Formatting with nothing selected applies to the word at the cursor; there is no "type in bold from here" mode. Lists restart only where Word's numbering would; there is no "restart numbering" command.
+- Tables: no merging or splitting of cells, no resizing columns by dragging, no per-cell borders. Tables whose structure the editor can't follow (rows shifted with `gridBefore`/`gridAfter`, rows in content controls, no grid) refuse row and column edits. Inserting a column keeps percentage and automatic cell widths as they are.
+- Pictures are inline only, with no cropping, rotation or text wrapping; they are resized with the mouse or touch, not the keyboard, and can't be pasted from the clipboard. Strict Open XML documents can't get new pictures, headers or footers.
+- Page setup applies to the whole document (every section).
+- Pasting inserts plain text. Find and replace doesn't search inside hyperlinks, fields, content controls, text boxes, footnotes, comments, nested tables or first-page/even-page headers, and replacement text can't contain line breaks.
+- New text copies the formatting of the run it was typed into; a bookmark or comment range right next to edited text can end up just before or after the new text rather than around it.
+
+**Saving and reliability**
+- The ZIP container is rebuilt on save: part contents are identical, but compressed sizes and archive metadata may differ from the original file.
+- Undo history lives in the server's memory with the open document: it is lost when the document is closed or reopened (also when it is recovered from a draft) and when the server restarts. Undo restores whole document states; the cursor is put back where it was, which may not be where the change happened.
+- A draft is written at most every two seconds, so the last moments of typing before a crash may be missing; drafts are only kept in the browser profile that was used, and not in a private window or when site storage is blocked.
 - Offline typing is kept on the page only; structural edits (Enter, formatting, tables, …) made while the server is unreachable are refused with a message.
+- Each edit returns the whole document model, which is fine for typical documents and acceptable for long ones (see *Rendering and performance*).
+
+**Files**
+- Password-protected files and legacy binary `.doc` files can't be opened; UTF-16 encoded parts are rejected (Word always writes UTF-8). Strict OOXML documents are read; their edits are untested against Word.
+- Documents are kept in memory while open (at most 32 at a time, 100 MiB per upload, 25 MiB per picture).
 
 ## Safety when opening files
 
