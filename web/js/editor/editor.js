@@ -35,6 +35,7 @@ import {
 import { containerBlocks, containerField, containerKey, parseContainerKey, parentKey } from "./containers.js";
 import { insertTextAtSelection, paragraphLength, parseParagraph, positionAt, selectionInfo, setCaret, setSelection } from "./dom.js";
 import { findMatches, replaceEdits } from "./find.js";
+import { nextCell, tableEdits } from "./tables.js";
 import { forgetRendered, renderBlocks, renderHeaderFooter } from "./render.js";
 
 /** How long typing must pause before the change is sent. */
@@ -807,13 +808,44 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       insertPageBreak();
       return;
     }
-    if (event.key === "Tab" && !mod && !event.altKey && !event.shiftKey) {
-      const sel = selectionInfo(hosts);
-      if (sel && sel.start.editable && sel.start.block === sel.end.block && sel.start.container === sel.end.container) {
-        event.preventDefault();
-        insertTextAtSelection(root.ownerDocument, "\t");
-        onInput();
+    if (event.key === "Tab" && !mod && !event.altKey) onTab(event);
+  }
+
+  /**
+   * Tab, as in Word: in a table it moves to the next cell (Shift+Tab to the
+   * previous one) and adds a row after the last cell; at the start of a
+   * list item it changes the item's level; elsewhere Tab types a tab
+   * character, and Shift+Tab leaves the document (moves the focus back).
+   */
+  function onTab(event) {
+    const sel = selectionInfo(hosts);
+    if (!sel || !sel.start.editable || sel.start.container !== sel.end.container) return;
+    const step = event.shiftKey ? -1 : 1;
+    const cell = cellAt(sel);
+    if (cell) {
+      event.preventDefault();
+      const table = blocksOf(cell.container)[cell.table];
+      const next = nextCell(table, cell.row, cell.cell, step);
+      if (next) {
+        placeCaret(0, 0, containerKey({ part: cell.part, cell: { table: cell.table, row: next.row, cell: next.cell } }));
+      } else if (step > 0) {
+        tableCommand((at, t) => {
+          const built = tableEdits("row-below", at, t);
+          return built.error ? built : { ...built, caret: { row: at.row + 1, cell: 0 } };
+        });
       }
+      return;
+    }
+    const paragraph = blocksOf(sel.start.container)[sel.start.block];
+    if (paragraph && paragraph.numbering && sel.collapsed && sel.start.offset === 0) {
+      event.preventDefault();
+      onCommand(step > 0 ? "indent" : "outdent");
+      return;
+    }
+    if (step > 0 && sel.start.block === sel.end.block) {
+      event.preventDefault();
+      insertTextAtSelection(root.ownerDocument, "\t");
+      onInput();
     }
   }
 

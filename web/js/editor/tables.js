@@ -86,3 +86,28 @@ export function tableSize(rows, columns) {
   if (!(r >= 1 && r <= MAX_TABLE.rows && c >= 1 && c <= MAX_TABLE.columns)) return null;
   return { rows: r, columns: c };
 }
+
+/**
+ * The cell Tab (`step` 1) or Shift+Tab (-1) moves to from `rows[row].cells[cell]`,
+ * in reading order, skipping cells that continue a vertical merge (they
+ * are drawn as part of the cell above); null at the end of the table.
+ */
+export function nextCell(table, row, cell, step) {
+  const rows = (table && table.rows) || [];
+  let r = row;
+  let c = cell;
+  for (;;) {
+    c += step;
+    if (c < 0) {
+      r -= 1;
+      if (r < 0) return null;
+      c = rows[r].cells.length - 1;
+    } else if (!rows[r] || c >= rows[r].cells.length) {
+      r += 1;
+      c = 0;
+      if (r >= rows.length) return null;
+    }
+    if (!rows[r].cells.length) continue;
+    if (rows[r].cells[c].vertical_merge !== "continue") return { row: r, cell: c };
+  }
+}

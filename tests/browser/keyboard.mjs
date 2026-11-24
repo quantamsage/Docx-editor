@@ -52,12 +52,42 @@ async function main() {
     check(await waitForModel((m) => tableOf(m)?.rows.length === 2 && tableOf(m).rows[0].cells.length === 3), "Enter in a dialog field inserts the table");
     check(await waitFor(`!document.getElementById("table-dialog").open && document.activeElement.closest?.("#doc-content") !== null`), "the focus returns to the document after the dialog");
 
+    // Tab moves between table cells, Shift+Tab back, and Tab in the last cell adds a row.
+    await type("a1");
+    await press(...TAB);
+    await type("b1");
+    check(await waitForModel((m) => cellText(m, 0, 0) === "a1" && cellText(m, 0, 1) === "b1"), "Tab moves to the next cell");
+    await press("Tab", "Tab", 9, SHIFT);
+    await type("<");
+    check(await waitForModel((m) => cellText(m, 0, 0) === "<a1"), "Shift+Tab moves to the previous cell");
+    for (let i = 0; i < 5; i++) await press(...TAB);
+    await type("last");
+    check(await waitForModel((m) => cellText(m, 1, 2) === "last"), "Tab reaches the last cell");
+    await press(...TAB);
+    check(await waitForModel((m) => tableOf(m)?.rows.length === 3), "Tab in the last cell adds a row");
+    await type("new row");
+    check(await waitForModel((m) => cellText(m, 2, 0) === "new row"), "the cursor is in the new row's first cell");
+
     // Escape closes dialogs and returns the focus to the document.
     await evaluate(`document.querySelector('[data-insert="page-setup"]').click()`);
     check(await waitFor(`document.getElementById("page-setup-dialog").open`), "Page setup opens");
     await press(...ESCAPE);
     check(await waitFor(`!document.getElementById("page-setup-dialog").open && document.activeElement.closest?.("#doc-content") !== null`), "Escape closes the dialog and returns to the document");
 
+    // Tab at the start of a list item changes its level.
+    await evaluate(`(() => {
+      const p = document.querySelector('#doc-content > [data-block="0"]');
+      const r = document.createRange(); r.setStart(p, 0); r.collapse(true);
+      document.getElementById("doc-content").focus();
+      getSelection().removeAllRanges(); getSelection().addRange(r);
+    })()`);
+    await press("*", "Digit8", 56, CTRL | SHIFT);
+    check(await waitForModel((m) => m.blocks[0].numbering?.level === 0), "Ctrl+Shift+8 makes a bulleted list");
+    await press(...TAB);
+    check(await waitForModel((m) => m.blocks[0].numbering?.level === 1), "Tab at the start of a list item moves it a level down");
+    await press("Tab", "Tab", 9, SHIFT);
+    check(await waitForModel((m) => m.blocks[0].numbering?.level === 0), "Shift+Tab moves it back up");
+    check(await waitForModel((m) => !JSON.stringify(m.blocks[0]).includes("\\t")), "no tab character was typed into the list item");
   } finally {
     await session.close();
   }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { containerKey } from "../../web/js/editor/containers.js";
-import { hasBorders, tableEdits, tableSize } from "../../web/js/editor/tables.js";
+import { hasBorders, nextCell, tableEdits, tableSize } from "../../web/js/editor/tables.js";
 
 const cells = (n) => Array.from({ length: n }, () => ({ span: 1, blocks: [] }));
 const table = { type: "table", grid: [3000, 3000, 3000], rows: [{ cells: cells(3) }, { cells: cells(3) }] };
@@ -55,4 +55,21 @@ test("page numbers are recognised in headers and footers", async () => {
   assert.equal(hasPageNumbers([field("NUMPAGES")]), false);
   assert.equal(hasPageNumbers([]), false);
   assert.equal(hasPageNumbers(undefined), false);
+});
+
+test("Tab and Shift+Tab move through cells in reading order, skipping merged-in cells", () => {
+  const cell = (vertical_merge) => ({ blocks: [], ...(vertical_merge ? { vertical_merge } : {}) });
+  const table = {
+    rows: [
+      { cells: [cell("restart"), cell(), cell()] },
+      { cells: [cell("continue"), cell(), cell()] },
+      { cells: [cell(), cell()] },
+    ],
+  };
+  assert.deepEqual(nextCell(table, 0, 0, 1), { row: 0, cell: 1 });
+  assert.deepEqual(nextCell(table, 0, 2, 1), { row: 1, cell: 1 }, "the merged-in cell is skipped");
+  assert.deepEqual(nextCell(table, 1, 1, -1), { row: 0, cell: 2 });
+  assert.deepEqual(nextCell(table, 2, 0, -1), { row: 1, cell: 2 });
+  assert.equal(nextCell(table, 2, 1, 1), null, "the last cell has no next cell");
+  assert.equal(nextCell(table, 0, 0, -1), null, "the first cell has no previous cell");
 });
