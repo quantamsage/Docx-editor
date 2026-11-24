@@ -224,6 +224,7 @@ body {
 .welcome h1 { font-size: 1.4rem; font-weight: 600; color: var(--page-text); margin: 0 0 0.75rem; }
 .welcome p { margin: 0.4rem auto; max-width: 30rem; line-height: 1.5; }
 .welcome-note { font-size: 0.85rem; }
+.welcome kbd { font: inherit; padding: 0 0.3em; border: 1px solid #c8c6c4; border-bottom-width: 2px; border-radius: 3px; background: #faf9f8; }
 
 /* Status bar */
 .statusbar {

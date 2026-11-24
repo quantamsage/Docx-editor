@@ -35,6 +35,7 @@ async function main() {
     check(await waitFor(`document.getElementById("status-connection")?.dataset.state === "connected"`), "connects to the local server");
     check(await evaluate(`document.querySelector('[data-action="save"]').disabled`), "Save is disabled with no document");
     check(await evaluate(`getComputedStyle(document.getElementById("notice")).display === "none"`), "notice bar is hidden at start");
+    check((await evaluate(`document.title`)) === "DOCX Editor" && (await evaluate(`document.getElementById("document-name").hidden && document.getElementById("status-words").hidden`)), "with no document open, no document name or word count is shown");
 
     // Helpers for editing: real key presses and typing through DevTools.
     const press = async (key, code, keyCode) => {

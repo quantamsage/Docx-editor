@@ -171,9 +171,13 @@ function renderStatus() {
 }
 
 function renderDocument() {
-  const name = current ? current.name : "Untitled document";
-  document.title = `${current && current.unsaved ? "• " : ""}${name} – DOCX Editor`;
+  // With no document open, the title bar and status bar say only that.
+  const name = current ? current.name : "";
+  document.title = current ? `${current.unsaved ? "• " : ""}${name} – DOCX Editor` : "DOCX Editor";
   $("document-name").textContent = name;
+  $("document-name").hidden = !current;
+  $("status-page").hidden = !current;
+  $("status-words").hidden = !current;
 
   for (const action of ["save", "save-as", "find"]) {
     document.querySelector(`[data-action="${action}"]`).disabled = busy || !current;

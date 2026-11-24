@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Untitled document – DOCX Editor</title>
+  <title>DOCX Editor</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/css/app.css">
   <script type="module" src="/static/js/app.js"></script>
@@ -16,7 +16,7 @@
         <span class="titlebar-app">DOCX Editor</span>
       </div>
       <div class="titlebar-document">
-        <span class="document-name" id="document-name">Untitled document</span>
+        <span class="document-name" id="document-name" hidden></span>
         <span class="save-state" id="save-state">No document open</span>
       </div>
       <div class="titlebar-spacer" aria-hidden="true"></div>
@@ -209,6 +209,7 @@
             <h1>No document is open</h1>
             <p>Choose <strong>New</strong> to start a blank document, or <strong>Open</strong> (or drop a <code>.docx</code> file here) to load one from your computer.</p>
             <p class="welcome-note">Everything runs on this computer. Documents never leave it.</p>
+            <p class="welcome-note">Keyboard: <kbd>Ctrl</kbd>+<kbd>O</kbd> opens a file, <kbd>Alt</kbd>+<kbd>F10</kbd> goes to the toolbar, <kbd>F6</kbd> moves between areas.</p>
           </div>
           <div class="hf hf-header" id="doc-header" role="textbox" aria-multiline="true" aria-label="Header" data-label="Header" data-label-lower="header" spellcheck="true" hidden></div>
           <div class="doc-content" id="doc-content" role="textbox" aria-multiline="true" aria-label="Document text" spellcheck="true" hidden></div>
