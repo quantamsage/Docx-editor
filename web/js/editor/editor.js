@@ -118,7 +118,14 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
     doc = { id: info.id, revision: info.revision || 0, model: info.model, canUndo: Boolean(info.can_undo), canRedo: Boolean(info.can_redo) };
     root.contentEditable = "true";
     root.setAttribute("aria-label", "Document text");
+    // Off-screen blocks skip layout once the page has been laid out (and
+    // their sizes remembered) once; see app.css.
+    root.classList.remove("is-settled");
     render(false);
+    const loaded = doc;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (doc === loaded) root.classList.add("is-settled");
+    }));
   }
 
   function unload() {

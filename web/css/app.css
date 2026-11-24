@@ -437,3 +437,16 @@ body {
 ::highlight(find-current) { background-color: #ff9632; }
 .notice-recovery { background: #e8f1fb; color: var(--text); border-bottom-color: #c7dcf3; flex-wrap: wrap; }
 .notice-recovery .button { padding: 0.25rem 0.8rem; }
+
+/* Long documents (Phase 7): blocks scrolled out of view skip layout and
+   painting, so typing and editing stay fast. Each block's height is
+   remembered from the first full layout (contain-intrinsic-size: auto),
+   and content-visibility is only switched on after it, so the page count
+   stays right. List paragraphs (whose marker hangs outside the box) and
+   paragraphs with pictures (whose resize handle does) are always drawn,
+   since paint containment would clip them. */
+.doc-content > [data-block] { contain-intrinsic-size: auto 3em; }
+.doc-content.is-settled > [data-block]:not(.para-list):not(:has(.obj-image)) {
+  content-visibility: auto;
+  overflow-clip-margin: 4px;
+}
