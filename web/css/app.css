@@ -213,6 +213,7 @@ body {
   border-bottom: 1px solid #f1bbbc;
 }
 .notice[data-kind="warning"] { background: #fff4ce; color: #5c4a00; border-color: #f2df8c; }
+.notice[data-kind="info"] { background: #e8f1fb; color: var(--text); border-color: #c7dcf3; }
 .notice-text { flex: 1; }
 .notice-close {
   border: none;

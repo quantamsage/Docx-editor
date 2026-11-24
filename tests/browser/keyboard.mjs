@@ -126,6 +126,33 @@ async function main() {
     await press(...ESCAPE);
     check(await waitFor(`document.querySelector('[data-action="find"]').getAttribute("aria-expanded") === "false"`), "closing the find bar marks Find collapsed");
 
+    // Screen readers hear what happened: through live regions that are always there.
+    const spoken = (id) => evaluate(`document.getElementById("${id}").textContent`);
+    check(
+      (await evaluate(`document.getElementById("announce-polite").getAttribute("role")`)) === "status" &&
+        (await evaluate(`document.getElementById("announce-urgent").getAttribute("role")`)) === "alert",
+      "there is a polite and an urgent live region",
+    );
+    await evaluate(`document.getElementById("doc-content").focus()`);
+    await press("z", "KeyZ", 90, CTRL);
+    check(await waitFor(`document.getElementById("announce-polite").textContent === "Undone."`), "undoing is announced");
+    await press("y", "KeyY", 89, CTRL);
+    check(await waitFor(`document.getElementById("announce-polite").textContent === "Redone."`), "redoing is announced");
+    await evaluate(`(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["not a document"], "notes.txt"));
+      document.getElementById("workspace").dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    })()`);
+    check(await waitFor(`document.getElementById("announce-urgent").textContent.includes("is not a Word document")`), `errors are announced urgently (${await spoken("announce-urgent")})`);
+    check((await evaluate(`document.getElementById("notice").dataset.kind`)) === "error" && !(await evaluate(`document.getElementById("notice").hasAttribute("role")`)), "the visible notice shows the error without announcing it twice");
+    await evaluate(`document.querySelector('[data-action="undo"]').click()`);
+    await waitFor(`document.getElementById("announce-polite").textContent === "Undone."`);
+    await waitFor(`!document.querySelector('[data-action="redo"]').disabled`);
+    await evaluate(`document.querySelector('[data-action="redo"]').click()`);
+    await waitFor(`document.getElementById("announce-polite").textContent === "Redone."`);
+    await evaluate(`document.querySelector('[data-action="redo"]').disabled = false; document.querySelector('[data-action="redo"]').click()`);
+    check(await waitFor(`document.getElementById("notice").dataset.kind === "info" && document.getElementById("announce-polite").textContent === "There is nothing to redo."`), `information is shown as such and announced politely (${await evaluate(`document.getElementById("notice").dataset.kind + ": " + document.getElementById("notice-text").textContent + " / " + document.getElementById("announce-polite").textContent`)})`);
+
     // The accessibility tree: every control has a name; toggles say whether they are on.
     await cdp.send("Accessibility.enable");
     const { nodes } = await cdp.send("Accessibility.getFullAXTree");

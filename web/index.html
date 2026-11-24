@@ -191,15 +191,15 @@
       </div>
     </div>
 
-    <div class="notice notice-recovery" id="recovery" role="alertdialog" aria-labelledby="recovery-text" hidden>
+    <div class="notice notice-recovery" id="recovery" role="region" aria-label="Draft recovery" hidden>
       <span class="notice-text" id="recovery-text"></span>
       <button type="button" class="button button-primary" id="recovery-open">Recover</button>
       <button type="button" class="button" id="recovery-discard">Discard</button>
     </div>
 
-    <div class="notice" id="notice" role="alert" hidden>
+    <div class="notice" id="notice" data-kind="error" hidden>
       <span class="notice-text" id="notice-text"></span>
-      <button type="button" class="notice-close" id="notice-close" aria-label="Dismiss">×</button>
+      <button type="button" class="notice-close" id="notice-close" aria-label="Dismiss message" title="Dismiss">×</button>
     </div>
 
     <main class="workspace" id="workspace" aria-label="Document">
@@ -288,6 +288,9 @@
         </div>
       </form>
     </dialog>
+
+    <div class="visually-hidden" id="announce-polite" role="status" aria-live="polite"></div>
+    <div class="visually-hidden" id="announce-urgent" role="alert" aria-live="assertive"></div>
 
     <footer class="statusbar" aria-label="Status">
       <span class="status-item" id="status-page">Page 1 of 1</span>

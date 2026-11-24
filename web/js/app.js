@@ -8,6 +8,7 @@ import { createFindBar } from "./editor/findbar.js";
 import { enablePictureResizing } from "./editor/images.js";
 import { PICTURE_TYPES, createInsertTools } from "./editor/insert.js";
 import { createToolbar } from "./editor/toolbar.js";
+import { createAnnouncer, openedMessage } from "./announce.js";
 import { enableRegionKeys, focusRegion, rovingToolbar } from "./keyboard.js";
 import { downloadBlob, pickFile, pickSaveLocation, saveErrorMessage, supportsFileSystemAccess, writeToHandle } from "./files.js";
 import { connectionLabel, createConnectionMonitor, formatPagePosition, formatWordCount } from "./status.js";
@@ -71,7 +72,10 @@ let offered = [];
 function offerNextDraft() {
   const next = offered[0];
   $("recovery").hidden = !next;
-  if (next) $("recovery-text").textContent = draftMessage(next);
+  if (next) {
+    $("recovery-text").textContent = draftMessage(next);
+    announce(`${draftMessage(next)} Press F6 to reach the Recover button.`);
+  }
 }
 
 async function findDrafts() {
@@ -212,10 +216,18 @@ function applyPageGeometry(section) {
 
 // ----- Notices -----
 
+let announce = () => {};
+
+/**
+ * Shows a message above the page and reads it out. `kind` is "error",
+ * "warning" (something the user should know about the document) or
+ * "info" (the result of an action).
+ */
 function showNotice(message, kind = "error") {
   $("notice").dataset.kind = kind;
   $("notice-text").textContent = message;
   $("notice").hidden = false;
+  announce(message, { urgent: kind === "error" });
 }
 
 function hideNotice() {
@@ -274,7 +286,10 @@ function setCurrent(info, { handle = null, isNew = false, draftId = null, closeP
 async function createNew() {
   if (!confirmDiscard()) return;
   // The page is shown when run() ends, so the cursor is put in it after.
-  if (await run("Creating…", async () => setCurrent(await newDocument(), { isNew: true }))) focusEditor();
+  if (await run("Creating…", async () => setCurrent(await newDocument(), { isNew: true }))) {
+    focusEditor();
+    announce(openedMessage(current.name, 0, true));
+  }
 }
 
 async function openFile(file, handle = null) {
@@ -288,6 +303,7 @@ async function openFile(file, handle = null) {
   if (!opened) return;
   focusEditor();
   if (warnings.length) showNotice(warnings.join(" "), "warning");
+  else announce(openedMessage(current.name, current.model.stats.words, false));
 }
 
 async function chooseAndOpen() {
@@ -371,6 +387,7 @@ async function saveAs() {
 
 function markSaved() {
   current.savedAt = new Date();
+  announce(`Saved ${current.name}.`);
   current.isNew = false;
   current.unsaved = editor.hasPendingChanges();
   // The file on disk now has the changes: the draft is no longer needed.
@@ -500,7 +517,10 @@ function bindEditor() {
       showNotice(message);
     },
     onInfo(message) {
-      showNotice(message, "warning");
+      showNotice(message, "info");
+    },
+    onAnnounce(message) {
+      announce(message);
     },
     onLost() {
       documentLost();
@@ -514,11 +534,11 @@ function bindEditor() {
     editor,
     insertBar: $("insert-tools"),
     tableBar: $("table-toolbar"),
-    onInfo: (message) => showNotice(message, "warning"),
+    onInfo: (message) => showNotice(message, "info"),
     onError: (message) => showNotice(message),
   });
   enablePictureResizing(editor);
-  findBar = createFindBar({ editor, bar: $("find-bar"), onInfo: (message) => showNotice(message, "warning") });
+  findBar = createFindBar({ editor, bar: $("find-bar"), onInfo: (message) => showNotice(message, "info") });
   for (const host of editor.hosts) {
     host.addEventListener("keydown", (event) => toolbar.handleKey(event));
     // Typing changes the page count and the caret's page.
@@ -550,6 +570,7 @@ function bindEditor() {
 }
 
 function init() {
+  announce = createAnnouncer($("announce-polite"), $("announce-urgent"));
   bindEditor();
   bindToolbar();
   bindShortcuts();

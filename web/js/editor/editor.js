@@ -61,9 +61,10 @@ const dirtyId = (key, block) => `${key}#${block}`;
  * @param {(message: string) => void} [hooks.onInfo]  Short informational messages.
  * @param {(name: string) => void} [hooks.onCommand]  A formatting command the browser raised (e.g. "bold").
  * @param {() => void} [hooks.onLost]  The server no longer has the document (e.g. it was restarted).
+ * @param {(message: string) => void} [hooks.onAnnounce]  Feedback for screen readers (e.g. "Undone").
  * @param {{header?: HTMLElement, footer?: HTMLElement}} [regions]  Editing hosts for the header and footer.
  */
-export function createEditor(root, { onChange, onError, onInfo = () => {}, onCommand = () => {}, onLost = () => {} }, regions = {}) {
+export function createEditor(root, { onChange, onError, onInfo = () => {}, onCommand = () => {}, onLost = () => {}, onAnnounce = () => {} }, regions = {}) {
   /** @type {{id: number, revision: number, model: object}|null} */
   let doc = null;
   const dirty = new Set();
@@ -586,6 +587,7 @@ export function createEditor(root, { onChange, onError, onInfo = () => {}, onCom
       render();
       if (caret && caret.start.editable) placeCaret(caret.start.block, caret.start.offset, caret.start.container);
       onChange(doc);
+      onAnnounce(step === "undo" ? "Undone." : "Redone.");
     });
     return task
       .catch((err) => {
