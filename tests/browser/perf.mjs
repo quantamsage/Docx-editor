@@ -32,6 +32,9 @@ async function main() {
     await evaluate(`(() => {
       window.__long = [];
       new PerformanceObserver((list) => window.__long.push(...list.getEntries().map((e) => e.duration))).observe({ type: "longtask", buffered: false });
+      // Event Timing: from an input event to the next frame painted (as in INP).
+      window.__events = [];
+      new PerformanceObserver((list) => window.__events.push(...list.getEntries().filter((e) => e.name === "input").map((e) => e.duration))).observe({ type: "event", durationThreshold: 16, buffered: false });
     })()`);
 
     /** Runs `action`, waits for `done` (an expression) and the page to settle, and records the times. */
@@ -84,6 +87,7 @@ async function main() {
     // Typing: 20 characters, one key at a time, as fast as a quick typist.
     await caretIn(middle, 0);
     await sleep(500);
+    await evaluate(`window.__events.length = 0`);
     await measure(
       "type 20 characters (until saved on the server)",
       async () => {
@@ -95,6 +99,12 @@ async function main() {
       `${paragraphText(middle)}.then((t) => t.startsWith("Performance check 1 "))`,
       5000,
     );
+    // Keys whose frame came within 16 ms are not reported; count them as 16.
+    const keys = await evaluate(`window.__events.slice()`);
+    const latencies = [...keys, ...Array(Math.max(0, 20 - keys.length)).fill(16)].sort((a, b) => a - b);
+    const typing = { median: latencies[10], worst: latencies[19] };
+    results.push({ step: "key press to next frame (median / worst of 20)", wall_ms: `${typing.median} / ${typing.worst}`, long_tasks_ms: "", longest_ms: "" });
+    check(typing.median <= 100, `typing: a key press reaches the screen in ${typing.median} ms (median; worst ${typing.worst} ms; budget 100 ms)`);
     await measure(
       "Enter (split a paragraph)",
       () => press("Enter", "Enter", 13),
