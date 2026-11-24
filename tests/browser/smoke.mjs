@@ -320,6 +320,7 @@ async function main() {
     check(await waitFor(`[...document.querySelectorAll("#doc-content .obj-image img")].some((img) => img.complete && img.naturalWidth > 0)`), "images are loaded from the document");
     check(await evaluate(`document.querySelectorAll("#doc-content .obj-link").length > 0`), "hyperlinks are shown");
     check((await text("status-words")).endsWith("words") && (await text("status-words")) !== "0 words", "status bar shows the word count");
+    check(/^Page 1 of [2-9]/.test(await text("status-page")), `the page count includes the page break (${await text("status-page")})`);
 
     // Replace a word in the title; its style and formatting stay.
     const headingBlock = await evaluate(`Number(document.querySelector("#doc-content .para-title").dataset.block)`);

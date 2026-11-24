@@ -95,3 +95,30 @@ export function createConnectionMonitor({
 
   return { checkNow, stop };
 }
+
+/**
+ * Estimates the page count, and the page of the caret, on the continuous
+ * sheet the editor shows: the content runs down pages of `pageHeight`, and
+ * a page break moves what follows it to the next page, below its top
+ * margin.
+ *
+ * @param {number} height  Height of the whole sheet.
+ * @param {number} pageHeight  Height of one page.
+ * @param {number[]} breaks  Where page breaks end, from the top of the sheet, in order.
+ * @param {number|null} caret  Where the caret is, from the top of the sheet.
+ * @param {number} [marginTop]  The top margin of a page.
+ * @returns {{current: number, total: number}}
+ */
+export function estimatePages(height, pageHeight, breaks, caret, marginTop = 0) {
+  const size = Math.max(1, pageHeight);
+  let shift = 0;
+  let caretPage = null;
+  for (const at of breaks) {
+    if (caret !== null && caretPage === null && caret < at) caretPage = Math.floor((caret + shift) / size) + 1;
+    const y = at + shift;
+    shift += (Math.floor(y / size) + 1) * size + marginTop - y;
+  }
+  const total = Math.max(1, Math.ceil((height + shift - 1) / size));
+  if (caret !== null && caretPage === null) caretPage = Math.floor((caret + shift) / size) + 1;
+  return { total, current: Math.min(total, Math.max(1, caretPage ?? 1)) };
+}

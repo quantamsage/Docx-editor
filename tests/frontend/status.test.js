@@ -5,6 +5,7 @@ import {
   connectionLabel,
   countWords,
   createConnectionMonitor,
+  estimatePages,
   formatPagePosition,
   formatWordCount,
 } from "../../web/js/status.js";
@@ -124,4 +125,17 @@ test("checkNow replaces a scheduled poll instead of adding one", async () => {
   await monitor.checkNow();
   await monitor.checkNow();
   assert.equal(timers.pending.size, 1);
+});
+
+test("page estimates follow the height and start a new page after each page break", () => {
+  // No breaks: by height.
+  assert.deepEqual(estimatePages(1000, 1000, [], 10), { current: 1, total: 1 });
+  assert.deepEqual(estimatePages(2500, 1000, [], 1500), { current: 2, total: 3 });
+  // One short page, a break, then a little more: two pages, not one.
+  assert.deepEqual(estimatePages(900, 1000, [400], 300, 100), { current: 1, total: 2 });
+  assert.deepEqual(estimatePages(900, 1000, [400], 500, 100), { current: 2, total: 2 });
+  // Two breaks on the first page: three pages.
+  assert.deepEqual(estimatePages(800, 1000, [200, 300], 700, 100), { current: 3, total: 3 });
+  // A break near the end of a long page.
+  assert.deepEqual(estimatePages(1900, 1000, [950], null, 100), { current: 1, total: 3 });
 });

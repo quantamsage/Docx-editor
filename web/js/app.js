@@ -11,7 +11,7 @@ import { createToolbar } from "./editor/toolbar.js";
 import { createAnnouncer, openedMessage } from "./announce.js";
 import { enableRegionKeys, focusRegion, rovingToolbar } from "./keyboard.js";
 import { downloadBlob, pickFile, pickSaveLocation, saveErrorMessage, supportsFileSystemAccess, writeToHandle } from "./files.js";
-import { connectionLabel, createConnectionMonitor, formatPagePosition, formatWordCount } from "./status.js";
+import { connectionLabel, createConnectionMonitor, estimatePages, formatPagePosition, formatWordCount } from "./status.js";
 
 /**
  * The open document, or null.
@@ -144,18 +144,21 @@ function saveStateText() {
   return current.isNew ? "Not saved yet" : "Opened";
 }
 
-/** Page count and the page the caret is on, from the rendered height. */
+/** Page count and the page the caret is on, estimated from the rendered height and page breaks. */
 function pagePosition() {
   const page = document.querySelector("#workspace .page");
-  const pageHeight = parseFloat(getComputedStyle(page).getPropertyValue("--page-height")) || page.clientHeight || 1;
-  const total = Math.max(1, Math.ceil((page.scrollHeight - 1) / pageHeight));
-  let currentPage = 1;
+  const style = getComputedStyle(page);
+  const pageHeight = parseFloat(style.getPropertyValue("--page-height")) || page.clientHeight || 1;
+  const marginTop = parseFloat(style.getPropertyValue("--margin-top")) || 0;
+  const pageTop = page.getBoundingClientRect().top;
+  const breaks = current ? [...$("doc-content").querySelectorAll(".obj-page_break")].map((b) => b.getBoundingClientRect().bottom - pageTop) : [];
+  let caret = null;
   const selection = document.getSelection();
   if (current && selection && selection.rangeCount && $("doc-content").contains(selection.anchorNode)) {
     const rect = selection.getRangeAt(0).getBoundingClientRect();
-    const top = rect.top || (selection.anchorNode.parentElement || page).getBoundingClientRect().top;
-    currentPage = Math.min(total, Math.max(1, Math.floor((top - page.getBoundingClientRect().top) / pageHeight) + 1));
+    caret = (rect.top || (selection.anchorNode.parentElement || page).getBoundingClientRect().top) - pageTop;
   }
+  const { current: currentPage, total } = estimatePages(page.scrollHeight, pageHeight, breaks, caret, marginTop);
   return { currentPage, total };
 }
 
